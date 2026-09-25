@@ -98,7 +98,6 @@ pub fn rgba(size: u32) -> Vec<u8> {
 }
 
 /// Encode the icon as a multi-resolution `.ico` (32-bit BMP entries).
-#[allow(dead_code)] // used by build.rs only
 pub fn ico(sizes: &[u32]) -> Vec<u8> {
     let images: Vec<Vec<u8>> = sizes.iter().map(|&s| bmp_entry(s)).collect();
     let mut out = Vec::new();

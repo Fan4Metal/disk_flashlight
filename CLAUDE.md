@@ -18,6 +18,8 @@ cargo run --release -- --bench D:\ --walk   # same, MFT scanner disabled
 cargo run --release -- D:\Projects   # open the GUI scanning a path on start
 ```
 
+Release: `python tools/make_release.py [--no-tests]` runs tests, `cargo build --release`, exports the icon (`disk_flashlight.exe --export-icon target\app.ico`) and compiles `tools/setup.iss` with Inno Setup 6 into `dist\`, passing the version from `Cargo.toml` via `/DMyAppVersion` (the `.iss` is not edited). The installer is per-user (`PrivilegesRequired=lowest`) and registers the context-menu verb under `HKCU\Software\Classes\{Directory,Drive}\shell\DiskFlashlight`. Explorer passes a drive as `"C:\"`, which Windows argument parsing turns into `C:"`; `main.rs::normalize` repairs it, so keep that when touching argument handling. The script fails early if `target\release\disk_flashlight.exe` is running (the file is locked).
+
 Toolchain: stable MSVC Rust plus VS 2022 Build Tools. In the Bash tool, `cargo` is not on PATH; prefix commands with `export PATH="$HOME/.cargo/bin:$PATH"`. A running `disk_flashlight.exe` locks the release binary, so stop it before rebuilding (`Get-Process disk_flashlight | Stop-Process`).
 
 Heredocs containing Rust code break the Bash tool (lifetime apostrophes); write source files with the Write tool or a Python script.

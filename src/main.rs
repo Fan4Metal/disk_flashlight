@@ -27,8 +27,14 @@ fn main() -> anyhow::Result<()> {
                 bench_path = Some(normalize(&args.next().unwrap_or_else(|| "C:".into())));
             }
             "--walk" => allow_mft = false,
+            "--export-icon" => {
+                // Used by tools/make_release.py for the installer's icon.
+                let out = args.next().unwrap_or_else(|| "app.ico".into());
+                std::fs::write(&out, icon::ico(&[16, 20, 24, 32, 40, 48, 64, 256]))?;
+                return Ok(());
+            }
             "-h" | "--help" => {
-                println!("disk_flashlight [PATH] | --bench PATH [--walk]");
+                println!("disk_flashlight [PATH] | --bench PATH [--walk] | --export-icon FILE");
                 return Ok(());
             }
             other => initial = Some(normalize(other)),
@@ -61,7 +67,15 @@ fn main() -> anyhow::Result<()> {
 
 /// `C:` means "current directory on C" to Windows; a bare drive letter given
 /// by the user always means the volume root.
+///
+/// Explorer's context menu passes a drive as `"C:\"`; Windows argument
+/// parsing reads `\"` as an escaped quote, so the program receives `C:"`.
+/// A trailing quote is therefore turned back into a backslash.
 fn normalize(arg: &str) -> PathBuf {
+    let arg = match arg.strip_suffix('"') {
+        Some(stripped) => format!("{}\\", stripped.trim_end_matches('\\')),
+        None => arg.to_string(),
+    };
     let b = arg.as_bytes();
     if b.len() == 2 && b[0].is_ascii_alphabetic() && b[1] == b':' {
         PathBuf::from(format!("{arg}\\"))
@@ -134,4 +148,19 @@ fn bench(path: PathBuf, allow_mft: bool) -> anyhow::Result<()> {
         thousands((mesh.indices.len() / 3) as u64)
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize;
+    use std::path::PathBuf;
+
+    #[test]
+    fn normalizes_explorer_arguments() {
+        assert_eq!(normalize("C:"), PathBuf::from(r"C:\"));
+        assert_eq!(normalize(r"C:\"), PathBuf::from(r"C:\"));
+        assert_eq!(normalize("C:\""), PathBuf::from(r"C:\"));
+        assert_eq!(normalize(r"D:\Projects"), PathBuf::from(r"D:\Projects"));
+        assert_eq!(normalize(r#"D:\My Dir\""#), PathBuf::from(r"D:\My Dir\"));
+    }
 }

@@ -1,8 +1,10 @@
 # Disk Flashlight
 
-*Русская версия: [README.ru.md](README.ru.md)*
+**English** | [Русский](README.ru.md)
 
 Disk Flashlight is a disk space analyzer for Windows in the spirit of OverDisk. The scanned directory is shown as a sunburst chart: the current directory sits in the centre, each ring outward contains the children of the ring before it, and within every ring the entries are ordered by size, largest first, clockwise from twelve o'clock.
+
+![Disk Flashlight showing drive C: as a sunburst chart, with the directory tree on the left](images/screenshot.png)
 
 The project is written in Rust and uses [egui](https://github.com/emilk/egui) with the wgpu backend. It is a work in progress; the current state corresponds to the MVP described in [PLAN.md](PLAN.md).
 
@@ -26,6 +28,17 @@ cargo build --release
 ```
 
 The binary is produced at `target\release\disk_flashlight.exe`.
+
+## Installer and release
+
+The release script builds the executable and a per-user installer (Inno Setup 6 is required):
+
+```
+python tools/make_release.py              # tests, release build, installer
+python tools/make_release.py --no-tests   # the same without cargo test
+```
+
+The installer is written to `dist\Disk_Flashlight <version> Setup.exe`; the version is taken from `Cargo.toml`. Installation does not require administrator rights: the program is placed in `%LOCALAPPDATA%\Programs\Disk Flashlight`. An optional task adds the **Analyze with Disk Flashlight** item to the Explorer context menu of folders and drives; the entry is removed on uninstallation.
 
 ## Usage
 
@@ -52,6 +65,7 @@ Keyboard shortcuts: `Backspace` goes up, `Alt+Left` and `Alt+Right` move through
 | `src/render.rs` | Tessellation of sectors into an `egui::Mesh`, palette |
 | `src/ui/` | Chart widget, directory tree, toolbar and status bar |
 | `src/history.rs` | Back/forward navigation history |
+| `tools/` | Installer script (`setup.iss`) and release script (`make_release.py`) |
 
 ## Roadmap
 
@@ -59,4 +73,4 @@ Planned: saving and loading scan results, and a context menu for opening items i
 
 ## License
 
-MIT
+MIT, see [LICENSE](LICENSE).
