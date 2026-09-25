@@ -26,6 +26,14 @@ pub struct Progress {
 }
 
 impl Progress {
+    /// Zero the counters (not the cancel flag) before a fallback rescan.
+    pub fn reset_counters(&self) {
+        self.files.store(0, Relaxed);
+        self.dirs.store(0, Relaxed);
+        self.bytes.store(0, Relaxed);
+        self.errors.store(0, Relaxed);
+    }
+
     pub fn snapshot(&self) -> (u64, u64, u64, u64) {
         (
             self.files.load(Relaxed),

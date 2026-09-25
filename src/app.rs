@@ -8,7 +8,7 @@ use egui::{Key, Modifiers};
 
 use crate::history::History;
 use crate::model::{Metric, Model, NO_NODE};
-use crate::scan::{self, ScanHandle, win::Drive};
+use crate::scan::{self, Method, ScanHandle, win::Drive};
 use crate::ui::chart::{ChartAction, ChartView};
 use crate::ui::tree::TreeView;
 
@@ -24,6 +24,8 @@ pub struct App {
     pub tree: TreeView,
     pub tree_hovered: Option<u32>,
     pub status: String,
+    /// Process has administrator rights (enables the MFT scanner).
+    pub elevated: bool,
 }
 
 impl App {
@@ -42,6 +44,7 @@ impl App {
             tree: TreeView::default(),
             tree_hovered: None,
             status: "Ready".into(),
+            elevated: scan::win::is_elevated(),
         };
         if let Some(p) = initial {
             app.start_scan(p);
@@ -74,12 +77,16 @@ impl App {
             None => {
                 ctx.request_repaint_after(Duration::from_millis(100));
             }
-            Some(Ok(model)) => {
+            Some(Ok((model, info))) => {
                 let secs = h.started.elapsed().as_secs_f32();
                 let (_, _, _, errors) = h.progress.snapshot();
                 let root = model.node(0);
+                let method = match info.method {
+                    Method::Mft => "MFT",
+                    Method::Walk => "directory walk",
+                };
                 self.status = format!(
-                    "Scanned {} files / {} dirs in {secs:.1}s{}",
+                    "Scanned {} files / {} dirs in {secs:.1}s via {method}{}",
                     crate::format::thousands(root.files as u64),
                     crate::format::thousands(root.dirs as u64),
                     if errors > 0 {
@@ -88,6 +95,9 @@ impl App {
                         String::new()
                     }
                 );
+                if let Some(reason) = info.fallback_reason {
+                    log::info!("MFT fallback: {reason}");
+                }
                 // Reflect the scanned volume in the drive picker.
                 if let Some(i) = self
                     .drives
@@ -106,6 +116,26 @@ impl App {
                 self.status = format!("Scan failed: {e}");
                 self.scan = None;
             }
+        }
+    }
+
+    /// Restart elevated (UAC prompt) so the MFT scanner can be used, keeping
+    /// the current scan target. Closes this window on success.
+    pub fn relaunch_as_admin(&mut self, ctx: &egui::Context) {
+        let target = self
+            .model
+            .as_ref()
+            .map(|m| m.root_path.clone())
+            .or_else(|| self.scan.as_ref().map(|h| h.path.display().to_string()))
+            .or_else(|| self.drives.get(self.drive_idx).map(|d| d.root.clone()))
+            .unwrap_or_default();
+        if scan::win::relaunch_elevated(&quote_arg(&target)) {
+            if let Some(h) = &self.scan {
+                h.cancel();
+            }
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        } else {
+            self.status = "Elevation was cancelled".into();
         }
     }
 
@@ -229,5 +259,28 @@ impl eframe::App for App {
             ChartAction::Navigate(id) => self.navigate(id),
             ChartAction::Up => self.go_up(),
         }
+    }
+}
+
+/// Quote a single command-line argument for `CommandLineToArgvW`, which
+/// treats backslashes before a closing quote as escapes: `"D:\My Dir\"`
+/// would swallow its closing quote, so trailing backslashes are doubled.
+fn quote_arg(s: &str) -> String {
+    if !s.contains([' ', '\t', '"']) {
+        return s.to_string();
+    }
+    let trailing = s.len() - s.trim_end_matches('\\').len();
+    format!("\"{}{}\"", s.replace('"', "\\\""), "\\".repeat(trailing))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::quote_arg;
+
+    #[test]
+    fn quoting() {
+        assert_eq!(quote_arg(r"C:\"), r"C:\");
+        assert_eq!(quote_arg(r"D:\My Files"), r#""D:\My Files""#);
+        assert_eq!(quote_arg(r"D:\My Files\"), r#""D:\My Files\\""#);
     }
 }

@@ -50,6 +50,18 @@ impl App {
                 self.rescan();
             }
 
+            if !self.elevated
+                && ui
+                    .button("Admin")
+                    .on_hover_text(
+                        "Restart as administrator to scan whole NTFS drives \
+                         through the MFT (much faster)",
+                    )
+                    .clicked()
+            {
+                self.relaunch_as_admin(ui.ctx());
+            }
+
             ui.separator();
 
             let has_model = self.model.is_some();

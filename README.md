@@ -8,7 +8,8 @@ The project is written in Rust and uses [egui](https://github.com/emilk/egui) wi
 
 ## Features
 
-- Parallel scanning of a drive or a directory (the `C:` drive with roughly 900 000 entries is scanned in a few seconds on a cold cache, and in well under a second on a warm one).
+- Scanning of whole NTFS drives by reading the Master File Table directly when the application runs with administrator rights (the `C:` drive with roughly 920 000 entries is scanned in under one second). The MFT scan counts hard links once and includes system areas such as `System Volume Information` and the NTFS metafiles.
+- Parallel directory walk for subdirectories, non-NTFS volumes and non-elevated runs (the same `C:` drive takes about 8 seconds on a cold cache and under 3 seconds on a warm one). The **Admin** toolbar button restarts the application elevated.
 - Sunburst chart with up to seven rings, rendered as a single cached GPU mesh; sectors thinner than one pixel are dropped, so the chart stays responsive regardless of tree size.
 - Tooltip with name, logical and allocated size, and directory and file counts for the sector under the cursor.
 - Click on a directory sector to make it the centre; right-click or click the centre to go up; back, forward and up navigation with history.
@@ -32,7 +33,10 @@ The binary is produced at `target\release\disk_flashlight.exe`.
 disk_flashlight.exe              # opens the window; a drive is picked from the toolbar
 disk_flashlight.exe D:\Projects  # scans the given path on start-up
 disk_flashlight.exe --bench C:\  # command-line benchmark of the scanner and layout
+disk_flashlight.exe --bench C:\ --walk  # the same benchmark with the MFT scanner disabled
 ```
+
+Setting the environment variable `RUST_LOG=disk_flashlight=debug` prints per-phase timings of the MFT scanner.
 
 Keyboard shortcuts: `Backspace` goes up, `Alt+Left` and `Alt+Right` move through history, `F5` rescans. The mouse wheel over the chart changes its zoom.
 
@@ -41,6 +45,7 @@ Keyboard shortcuts: `Backspace` goes up, `Alt+Left` and `Alt+Right` move through
 | Path | Purpose |
 |---|---|
 | `src/model.rs` | Arena tree packed in depth-first order with children sorted by size |
+| `src/scan/mft.rs` | NTFS Master File Table reader and parser |
 | `src/scan/walk.rs` | Parallel directory walk (rayon over `read_dir`) |
 | `src/scan/win.rs` | Win32 helpers: drive enumeration, cluster size, compressed sizes |
 | `src/layout.rs` | Sunburst layout and hit testing |
@@ -50,7 +55,7 @@ Keyboard shortcuts: `Backspace` goes up, `Alt+Left` and `Alt+Right` move through
 
 ## Roadmap
 
-Planned after the MVP: reading the NTFS master file table directly for near-instant scans, saving and loading scan results, and a context menu for opening items in Explorer.
+Planned: saving and loading scan results, and a context menu for opening items in Explorer.
 
 ## License
 

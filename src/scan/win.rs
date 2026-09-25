@@ -146,3 +146,33 @@ pub fn compressed_size(path: &Path) -> Option<u64> {
     }
     Some(((high as u64) << 32) | low as u64)
 }
+
+/// Whether the process runs with administrator rights (needed for MFT reads).
+pub fn is_elevated() -> bool {
+    unsafe { windows_sys::Win32::UI::Shell::IsUserAnAdmin() != 0 }
+}
+
+/// Start this executable again with a UAC elevation prompt. Returns `false`
+/// if the user declined or the launch failed.
+pub fn relaunch_elevated(args: &str) -> bool {
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    let Ok(exe) = std::env::current_exe() else {
+        return false;
+    };
+    let exe = wide_path(&exe);
+    let verb = wide("runas");
+    let params = wide(args);
+    const SW_SHOWNORMAL: i32 = 1;
+    let h = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            verb.as_ptr(),
+            exe.as_ptr(),
+            params.as_ptr(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    // ShellExecute returns a value > 32 on success.
+    h as isize > 32
+}

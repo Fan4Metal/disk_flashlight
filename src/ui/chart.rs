@@ -10,6 +10,10 @@ use crate::layout::{self, Layout, LayoutParams};
 use crate::model::{Metric, Model};
 use crate::render::{self, Palette};
 
+/// Approximate extent of the standard Windows arrow cursor below and to the
+/// right of its hot spot, in points (it scales with DPI like the UI does).
+const CURSOR_SIZE: egui::Vec2 = egui::vec2(12.0, 20.0);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChartAction {
     None,
@@ -168,14 +172,18 @@ impl ChartView {
                 }
             }
 
-        // Tooltip, shown immediately (no hover delay) like in OverDisk.
-        if let Some(node) = self.hovered {
+        // Tooltip, shown immediately (no hover delay) like in OverDisk. It is
+        // anchored to a box covering the arrow cursor rather than to the
+        // pointer itself, so it opens below the arrow instead of under it;
+        // near screen edges egui flips it to the other side of that box.
+        if let (Some(node), Some(p)) = (self.hovered, pointer) {
             let n = model.node(node);
+            let cursor_box = egui::Rect::from_min_size(p, CURSOR_SIZE);
             egui::Tooltip::always_open(
                 ui.ctx().clone(),
                 response.layer_id,
                 response.id,
-                egui::PopupAnchor::Pointer,
+                egui::PopupAnchor::ParentRect(cursor_box),
             )
             .show(|ui| {
                 ui.set_max_width(360.0);

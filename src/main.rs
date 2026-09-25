@@ -3,6 +3,7 @@
 mod app;
 mod format;
 mod history;
+mod icon;
 mod layout;
 mod model;
 mod render;
@@ -18,25 +19,36 @@ fn main() -> anyhow::Result<()> {
     env_logger::init();
     let mut args = std::env::args().skip(1);
     let mut initial: Option<PathBuf> = None;
+    let mut bench_path: Option<PathBuf> = None;
+    let mut allow_mft = true;
     while let Some(a) = args.next() {
         match a.as_str() {
             "--bench" => {
-                let path = args.next().unwrap_or_else(|| "C:\\".into());
-                return bench(PathBuf::from(path));
+                bench_path = Some(normalize(&args.next().unwrap_or_else(|| "C:".into())));
             }
+            "--walk" => allow_mft = false,
             "-h" | "--help" => {
-                println!("disk_flashlight [PATH] | --bench PATH");
+                println!("disk_flashlight [PATH] | --bench PATH [--walk]");
                 return Ok(());
             }
-            other => initial = Some(PathBuf::from(other)),
+            other => initial = Some(normalize(other)),
         }
+    }
+    if let Some(p) = bench_path {
+        return bench(p, allow_mft);
     }
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Disk Flashlight")
             .with_inner_size([1200.0, 800.0])
-            .with_min_inner_size([640.0, 420.0]),
+            .with_min_inner_size([640.0, 420.0])
+            .with_icon(egui::IconData {
+                rgba: icon::rgba(64),
+                width: 64,
+                height: 64,
+            }),
+        centered: true,
         ..Default::default()
     };
     eframe::run_native(
@@ -47,12 +59,32 @@ fn main() -> anyhow::Result<()> {
     .map_err(|e| anyhow::anyhow!("{e}"))
 }
 
+/// `C:` means "current directory on C" to Windows; a bare drive letter given
+/// by the user always means the volume root.
+fn normalize(arg: &str) -> PathBuf {
+    let b = arg.as_bytes();
+    if b.len() == 2 && b[0].is_ascii_alphabetic() && b[1] == b':' {
+        PathBuf::from(format!("{arg}\\"))
+    } else {
+        PathBuf::from(arg)
+    }
+}
+
 /// `--bench PATH`: scan, pack, lay out and tessellate, printing timings.
-fn bench(path: PathBuf) -> anyhow::Result<()> {
+fn bench(path: PathBuf, allow_mft: bool) -> anyhow::Result<()> {
     let progress = scan::Progress::default();
+    // Start the rayon pool first so its start-up is not billed to the scanner.
+    rayon::broadcast(|_| ());
     let t = Instant::now();
-    let model = scan::walk::scan(&path, &progress)?;
+    let (model, info) = scan::scan(&path, &progress, allow_mft)?;
     let scan_time = t.elapsed();
+    println!(
+        "method:    {:?}{}",
+        info.method,
+        info.fallback_reason
+            .map(|r| format!("  (MFT unavailable: {r})"))
+            .unwrap_or_default()
+    );
     let (_, _, _, errors) = progress.snapshot();
     let root = model.node(0);
     println!("path:      {}", model.root_path);

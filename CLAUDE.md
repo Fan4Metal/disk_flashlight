@@ -13,7 +13,8 @@ cargo build --release                # binary at target\release\disk_flashlight.
 cargo test                           # unit tests (model, layout hit-test, history, format)
 cargo test layout::                  # single module's tests
 cargo clippy --release               # must stay warning-free
-cargo run --release -- --bench D:\   # scanner + layout benchmark, prints timings and top-level dirs
+cargo run --release -- --bench D:\   # scanner + layout benchmark, prints method, timings, top-level dirs
+cargo run --release -- --bench D:\ --walk   # same, MFT scanner disabled
 cargo run --release -- D:\Projects   # open the GUI scanning a path on start
 ```
 
@@ -25,7 +26,9 @@ Heredocs containing Rust code break the Bash tool (lifetime apostrophes); write 
 
 Data flows in one direction: `scan` → `model` → `layout` → `render` → `ui`.
 
-- **`scan/walk.rs`** walks directories with `std::fs::read_dir` under rayon (on Windows `DirEntry::metadata()` is free, taken from `WIN32_FIND_DATAW`). Symlinks and junctions are skipped. It builds a nested `RawDir` tree and reports progress through atomics in `Progress`. `scan/mod.rs` runs it on a thread and hands the result back over a bounded channel; `scan/win.rs` wraps the few Win32 calls (drive list, cluster size, compressed size). Only `Win32_Foundation` and `Win32_Storage_FileSystem` features of `windows-sys` are enabled; `DRIVE_*` constants are hard-coded to avoid another feature.
+- **`scan/mod.rs::scan`** picks the scanner: volume roots (`C:\`) go to **`scan/mft.rs`** first, which opens `\\.\C:` raw, locates `$MFT` via `FSCTL_GET_NTFS_VOLUME_DATA`, streams the table in 8 MiB blocks on a reader thread and parses 1 KiB FILE records in parallel (fixups, `$FILE_NAME` for name/parent, unnamed `$DATA` for sizes; extension records are merged into their base record; DOS 8.3 names skipped; hard links counted once). It needs administrator rights, so without elevation or on non-NTFS it fails and `scan` falls back to the walk, resetting progress counters. Its parsing is unit-tested on synthetic records built in the test module; testing against a real volume requires an elevated run (`Start-Process -Verb RunAs`, which shows a UAC prompt the user must confirm). The MFT result includes metafiles (`$MFT`, `$LogFile`, `$Extend`) and `System Volume Information`, so totals differ from the walk.
+- **`scan/walk.rs`** walks directories with `std::fs::read_dir` under rayon (on Windows `DirEntry::metadata()` is free, taken from `WIN32_FIND_DATAW`). Symlinks and junctions are skipped. It builds a nested `RawDir` tree and reports progress through atomics in `Progress`. `scan/mod.rs` runs it on a thread and hands the result back over a bounded channel; `scan/win.rs` wraps the few Win32 calls (drive list, cluster size, compressed size). `windows-sys` features are kept minimal (`Win32_Foundation`, `Win32_Storage_FileSystem`, `Win32_System_IO`, `Win32_UI_Shell`); `DRIVE_*` constants are hard-coded to avoid another feature. `win::relaunch_elevated` restarts the app via `ShellExecuteW("runas")`; arguments go through `app::quote_arg` because `CommandLineToArgvW` treats `\"` as an escaped quote.
+- **`icon.rs`** draws the app icon procedurally with no dependencies; `build.rs` includes it via `#[path]` to write a multi-size `.ico` and embeds it with `winresource`, and `main.rs` uses the same pixels for the window icon.
 - **`model.rs`** packs the raw tree into an arena `Vec<Node>` in DFS order. Every node's children are a contiguous range **sorted by logical size descending**, and names live in one string arena. This ordering is what makes "largest first" free downstream; anything that iterates children may rely on it. For the physical metric the order can differ slightly, so layout and the tree re-sort a copy when `Metric::Physical` is active.
 - **`layout.rs`** converts a subtree rooted at any node into rings of `Sector { node, a0, a1 }` (angle 0 = top, clockwise). Ring radii follow a geometric series (`ring_shrink`). It stops at the first child whose arc is shorter than `min_arc_px`, so sector count is bounded by what is visible, not by tree size. `Layout::hit_test` finds the ring by radius and binary-searches the angle; `Layout::index` maps node id → sector for external highlighting.
 - **`render.rs`** tessellates all sectors into a single `egui::Mesh` (one draw call) and defines the palette (hue by ring depth, brightness alternating by index, lower saturation for files). Helper shapes for hover outlines and guide circles live here too.
@@ -35,7 +38,7 @@ Data flows in one direction: `scan` → `model` → `layout` → `render` → `u
 
 ## Conventions
 
-- Commits in this repository end with `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>` (this overrides the global "no Co-Authored-By" rule for this repo only).
+- Commits in this repository end with a `Co-Authored-By:` trailer naming the Claude model doing the work, e.g. `Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>` (this overrides the global "no Co-Authored-By" rule for this repo only).
 - Keep the model and layout allocation-free on hot paths; the chart must stay responsive on ~1M-node trees (benchmarks in `PLAN.md`: C:\ with 917k nodes scans in ~8.5 s cold, layout + mesh ≈ 1 ms).
 - Node ids are `u32` indices; `NO_NODE` (`u32::MAX`) is the null parent. Root of a scan is always id 0.
 - Palette and layout tunables are grouped in `render::Palette` and `layout::LayoutParams` rather than scattered as literals.
