@@ -38,7 +38,16 @@ python tools/make_release.py              # tests, release build, installer
 python tools/make_release.py --no-tests   # the same without cargo test
 ```
 
-The installer is written to `dist\Disk_Flashlight <version> Setup.exe`; the version is taken from `Cargo.toml`. Installation does not require administrator rights: the program is placed in `%LOCALAPPDATA%\Programs\Disk Flashlight`. An optional task adds the **Analyze with Disk Flashlight** item to the Explorer context menu of folders and drives; the entry is removed on uninstallation.
+The installer is written to `dist\Disk_Flashlight_<version>_Setup.exe`, together with a portable copy of the program, `dist\Disk_Flashlight_<version>_portable.exe`; the version is taken from `Cargo.toml`. Installation does not require administrator rights: the program is placed in `%LOCALAPPDATA%\Programs\Disk Flashlight`. An optional task adds the **Analyze with Disk Flashlight** item to the Explorer context menu of folders and drives; the entry is removed on uninstallation.
+
+Releases on GitHub are built by the **Release** workflow (`.github/workflows/release.yml`). After the version in `Cargo.toml` is updated and committed, pushing a matching tag publishes a release with the installer and the portable executable:
+
+```
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The workflow stops if the tag does not match the version in `Cargo.toml`. A manual run from the Actions tab builds the same files as a workflow artifact without publishing a release. The executables are not code-signed, so Windows SmartScreen may warn about an unknown publisher on first launch.
 
 ## Usage
 

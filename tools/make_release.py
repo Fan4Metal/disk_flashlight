@@ -1,5 +1,6 @@
 """
-Сборка выпуска: cargo build --release + установщик Inno Setup (dist\\Disk_Flashlight <версия> Setup.exe).
+Сборка выпуска: cargo build --release + установщик Inno Setup (dist\\Disk_Flashlight_<версия>_Setup.exe)
+и портативная копия программы (dist\\Disk_Flashlight_<версия>_portable.exe).
 
 Запускается из любой папки: python tools/make_release.py [--no-tests]
 Внешних зависимостей нет. Вывод cargo и ISCC показывается как есть, чтобы был виден ход сборки.
@@ -182,9 +183,13 @@ def main() -> int:
             ],
             "ISCC",
         )
-        installer = DIST_DIR / f"Disk_Flashlight {version} Setup.exe"
+        installer = DIST_DIR / f"Disk_Flashlight_{version}_Setup.exe"
         if not installer.is_file():
             raise ReleaseError(f"ISCC завершился, но установщик не найден: {installer}")
+        # Имена без пробелов: GitHub заменяет пробелы в именах файлов релиза на точки.
+        portable = DIST_DIR / f"Disk_Flashlight_{version}_portable.exe"
+        shutil.copy2(EXE, portable)
+        print(f"Портативная версия: {portable.relative_to(ROOT)}")
         steps.finish()
 
     except ReleaseError as e:
@@ -196,8 +201,8 @@ def main() -> int:
 
     minutes, seconds = divmod(int(time.monotonic() - total_started), 60)
     print(f"\n=== Выпуск {version} собран за {minutes} мин {seconds} с ===")
-    print(f"  программа:   {EXE}  ({human_size(EXE.stat().st_size)})")
     print(f"  установщик:  {installer}  ({human_size(installer.stat().st_size)})")
+    print(f"  портативная: {portable}  ({human_size(portable.stat().st_size)})")
     return 0
 
 
