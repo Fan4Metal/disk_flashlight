@@ -7,6 +7,7 @@ use egui::Ui;
 use crate::app::App;
 use crate::format::{human_size, thousands};
 use crate::model::Metric;
+use crate::render::ColorMode;
 
 impl App {
     pub fn toolbar(&mut self, ui: &mut Ui) {
@@ -106,6 +107,24 @@ impl App {
                 });
             if metric != self.metric {
                 self.metric = metric;
+                self.chart.invalidate();
+            }
+
+            let mut mode = self.chart.palette.mode;
+            let label = |m: ColorMode| match m {
+                ColorMode::Size => "Colors: by size",
+                ColorMode::Depth => "Colors: by level",
+            };
+            egui::ComboBox::from_id_salt("color_mode")
+                .selected_text(label(mode))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut mode, ColorMode::Size, label(ColorMode::Size))
+                        .on_hover_text("Largest item among its siblings in red, smaller ones towards yellow; paler further out");
+                    ui.selectable_value(&mut mode, ColorMode::Depth, label(ColorMode::Depth))
+                        .on_hover_text("Colour by ring: red in the centre towards yellow at the rim");
+                });
+            if mode != self.chart.palette.mode {
+                self.chart.palette.mode = mode;
                 self.chart.invalidate();
             }
 

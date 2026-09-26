@@ -18,6 +18,9 @@ pub struct Sector {
     /// Start angle in radians, 0 = top, increasing clockwise.
     pub a0: f32,
     pub a1: f32,
+    /// Size relative to the largest sibling (1.0 for the largest), used by
+    /// the size-encoded palette.
+    pub rel: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -192,11 +195,16 @@ fn emit(
     let min_angle = params.min_arc_px / r_out;
     let mut a = a0;
     let mut pending = Vec::new();
+    // Children arrive largest first, so the first one is the largest sibling.
+    let mut largest = 0u64;
     for c in children {
         let n = model.node(c);
         let m = n.metric(metric);
         if m == 0 {
             break;
+        }
+        if largest == 0 {
+            largest = m;
         }
         let ca = span * (m as f64 / total as f64) as f32;
         if ca < min_angle {
@@ -206,6 +214,7 @@ fn emit(
             node: c,
             a0: a,
             a1: a + ca,
+            rel: (m as f64 / largest as f64) as f32,
         });
         if n.is_dir {
             pending.push((c, a, a + ca));
@@ -242,6 +251,10 @@ mod tests {
         );
         let names: Vec<&str> = l.rings[0].iter().map(|s| m.name(s.node)).collect();
         assert_eq!(names, vec!["c", "b", "a"]);
+        // Sizes 60, 30, 10: relative to the largest sibling.
+        for (s, want) in l.rings[0].iter().zip([1.0, 0.5, 1.0 / 6.0]) {
+            assert!((s.rel - want).abs() < 1e-6, "{} != {want}", s.rel);
+        }
         assert!((l.rings[0][0].a1 - TAU * 0.6).abs() < 1e-4);
         let r = l.radii[0].0 + 1.0;
         let name_at = |deg: f32| {

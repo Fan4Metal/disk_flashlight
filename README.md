@@ -17,6 +17,7 @@ The project is written in Rust and uses [egui](https://github.com/emilk/egui) wi
 - Click on a directory sector to make it the centre; a click on the centre goes up; back, forward and up navigation with history.
 - Context menu on right-click with **Open in Explorer** and **Properties** for the sector under the cursor, or for the current directory when the centre is right-clicked.
 - Directory tree on the left, synchronised with the chart in both directions.
+- Two colour schemes selectable in the toolbar: **by size**, where the largest item among its siblings is red and smaller ones shift towards yellow, with colours becoming paler towards the rim (as in OverDisk), and **by level**, where the colour depends on the ring.
 - Physical (cluster-rounded, compressed and sparse files taken into account) or logical size as the chart metric.
 - Status bar with directory and file counts, logical size, allocated size and slack for the current root.
 
