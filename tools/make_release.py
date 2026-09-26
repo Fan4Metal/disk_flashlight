@@ -25,7 +25,7 @@ ICON = ROOT / "target" / "app.ico"
 
 # Файлы, которые установщик берёт из репозитория (см. [Files] в setup.iss).
 BUNDLED_FILES = ["LICENSE", "README.md", "README.ru.md"]
-# Папка внутри портативного архива: при распаковке «сюда» файлы не рассыпаются.
+# Папка внутри портативного архива: при распаковке «сюда» exe не оказывается среди чужих файлов.
 PORTABLE_DIR = "Disk Flashlight"
 
 ISCC_PATHS = [
@@ -147,15 +147,13 @@ def check_prerequisites() -> tuple[str, Path]:
 
 
 def make_portable_zip(version: str) -> Path:
-    """Архив с программой и документацией в папке PORTABLE_DIR (как в установленной версии)."""
+    """Архив с одним exe в папке PORTABLE_DIR (документация есть на GitHub)."""
     archive = DIST_DIR / f"Disk_Flashlight_{version}_portable.zip"
     # Портативный exe прежних сборок больше не выпускается: убираем, чтобы не попал в релиз.
     stale = DIST_DIR / f"Disk_Flashlight_{version}_portable.exe"
     stale.unlink(missing_ok=True)
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as z:
         z.write(EXE, f"{PORTABLE_DIR}/{EXE.name}")
-        for name in BUNDLED_FILES:
-            z.write(ROOT / name, f"{PORTABLE_DIR}/{name}")
     return archive
 
 
