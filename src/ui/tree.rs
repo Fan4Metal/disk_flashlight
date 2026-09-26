@@ -97,9 +97,12 @@ impl TreeView {
         };
     }
 
-    /// Expand all ancestors of `id` so that it is visible, and scroll to it.
+    /// Show `id`, the new centre of the chart: only it and its ancestors stay
+    /// expanded, everything else collapses (so expansions do not pile up while
+    /// navigating), and the tree scrolls to it.
     pub fn reveal(&mut self, model: &Model, id: u32) {
-        let mut cur = model.node(id).parent;
+        self.expanded.clear();
+        let mut cur = id;
         while cur != NO_NODE {
             self.expanded.insert(cur);
             cur = model.node(cur).parent;
@@ -257,5 +260,53 @@ impl TreeView {
             self.dirty = true;
         }
         action
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::RawDir;
+
+    fn dir(name: &str, size: u64, subdirs: Vec<RawDir>) -> RawDir {
+        // Sizes set the order: a directory's own `size` is recomputed from
+        // files, so give each one a file of that size.
+        RawDir {
+            name: name.into(),
+            files: vec![crate::model::RawFile { name: "f".into(), size, alloc: size }],
+            subdirs,
+            ..Default::default()
+        }
+    }
+
+    fn rows(t: &mut TreeView, m: &Model) -> Vec<String> {
+        t.rebuild(m, Metric::Logical);
+        t.rows.iter().map(|&(id, _)| m.name(id).to_string()).collect()
+    }
+
+    #[test]
+    fn navigation_collapses_everything_off_the_path() {
+        let raw = dir(
+            "root",
+            1,
+            vec![
+                dir("a", 30, vec![dir("a1", 20, vec![dir("deep", 1, vec![])]), dir("a2", 10, vec![])]),
+                dir("b", 5, vec![dir("b1", 1, vec![])]),
+            ],
+        );
+        let m = Model::from_raw(raw, "X:\\".into(), 1);
+        let id = |path: &[&str]| m.find_dir(path);
+        let mut t = TreeView::default();
+        assert_eq!(rows(&mut t, &m), ["root", "a", "b"]);
+
+        // b is expanded by hand, then the chart moves into a1 (inside a).
+        t.expanded.insert(id(&["b"]));
+        assert_eq!(rows(&mut t, &m), ["root", "a", "b", "b1"]);
+        t.reveal(&m, id(&["a", "a1"]));
+        assert_eq!(rows(&mut t, &m), ["root", "a", "a1", "deep", "a2", "b"]);
+
+        // Up to a: a1 collapses again.
+        t.reveal(&m, id(&["a"]));
+        assert_eq!(rows(&mut t, &m), ["root", "a", "a1", "a2", "b"]);
     }
 }
