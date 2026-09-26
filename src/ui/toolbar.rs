@@ -13,32 +13,36 @@ impl App {
     pub fn toolbar(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             // Drive picker.
-            let selected_text = self
-                .drives
-                .get(self.drive_idx)
-                .map(|d| d.display())
-                .unwrap_or_else(|| "—".into());
-            let mut pick: Option<usize> = None;
+            // A selected drive whose query has not returned yet shows its root.
+            let selected_text = match &self.drive {
+                Some(root) => self
+                    .drives
+                    .iter()
+                    .find(|d| &d.root == root)
+                    .map_or_else(|| root.clone(), |d| d.display()),
+                None => "—".into(),
+            };
+            let mut pick: Option<String> = None;
             egui::ComboBox::from_id_salt("drive")
                 .selected_text(selected_text)
                 .width(160.0)
                 .show_ui(ui, |ui| {
-                    for (i, d) in self.drives.iter().enumerate() {
+                    for d in &self.drives {
                         let text = format!(
                             "{}  {} free of {}",
                             d.display(),
                             human_size(d.free),
                             human_size(d.total)
                         );
-                        if ui.selectable_label(i == self.drive_idx, text).clicked() {
-                            pick = Some(i);
+                        let selected = self.drive.as_ref() == Some(&d.root);
+                        if ui.selectable_label(selected, text).clicked() {
+                            pick = Some(d.root.clone());
                         }
                     }
                 });
-            if let Some(i) = pick {
-                self.drive_idx = i;
-                let root = PathBuf::from(&self.drives[i].root);
-                self.start_scan(root);
+            if let Some(root) = pick {
+                self.start_scan(PathBuf::from(&root));
+                self.drive = Some(root);
             }
 
             let scanning = self.scan.is_some();

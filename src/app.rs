@@ -21,8 +21,12 @@ use crate::ui::tree::TreeView;
 pub struct App {
     pub model: Option<Arc<Model>>,
     pub scan: Option<ScanHandle>,
+    /// Drives for the picker, by letter; each is added once its (possibly
+    /// slow, for a network drive) query on a background thread returns.
     pub drives: Vec<Drive>,
-    pub drive_idx: usize,
+    drive_rx: crossbeam_channel::Receiver<Option<Drive>>,
+    /// Root of the drive selected in the picker (`C:\`).
+    pub drive: Option<String>,
     pub custom_path: String,
     pub nav: History,
     pub metric: Metric,
@@ -45,19 +49,28 @@ impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, initial: Option<PathBuf>) -> Self {
         cc.egui_ctx.set_visuals(egui::Visuals::light());
         let settings = cc.storage.map(Settings::load).unwrap_or_default();
-        let drives = scan::win::list_drives();
+        let (tx, drive_rx) = crossbeam_channel::unbounded();
+        for root in scan::win::drive_roots() {
+            let (tx, ctx) = (tx.clone(), cc.egui_ctx.clone());
+            let spawned = std::thread::Builder::new()
+                .name(format!("drive {root}"))
+                .spawn(move || {
+                    let _ = tx.send(scan::win::drive_info(&root));
+                    ctx.request_repaint();
+                });
+            if let Err(e) = spawned {
+                log::warn!("drive query thread: {e}");
+            }
+        }
         // The last scanned path is offered, not scanned: in the path field,
         // and in the drive picker (so Rescan scans it) if it is a drive.
         let last_path = settings.last_path.unwrap_or_default();
-        let drive_idx = drives
-            .iter()
-            .position(|d| d.root.eq_ignore_ascii_case(&last_path))
-            .unwrap_or(usize::MAX);
         let mut app = Self {
             model: None,
             scan: None,
-            drives,
-            drive_idx,
+            drives: Vec::new(),
+            drive_rx,
+            drive: drive_root_of(&last_path),
             custom_path: last_path,
             nav: History::default(),
             metric: settings.metric,
@@ -93,9 +106,19 @@ impl App {
             .model
             .as_ref()
             .map(|m| PathBuf::from(&m.root_path))
-            .or_else(|| self.drives.get(self.drive_idx).map(|d| PathBuf::from(&d.root)));
+            .or_else(|| self.drive.as_ref().map(PathBuf::from));
         if let Some(p) = path {
             self.start_scan(p);
+        }
+    }
+
+    /// Add drives whose background query has returned.
+    fn poll_drives(&mut self) {
+        while let Ok(info) = self.drive_rx.try_recv() {
+            if let Some(d) = info {
+                let at = self.drives.partition_point(|x| x.root < d.root);
+                self.drives.insert(at, d);
+            }
         }
     }
 
@@ -128,11 +151,7 @@ impl App {
                 }
                 // Reflect the scanned volume in the drive picker; a folder
                 // scan shows no drive there.
-                self.drive_idx = self
-                    .drives
-                    .iter()
-                    .position(|d| d.root.eq_ignore_ascii_case(&model.root_path))
-                    .unwrap_or(usize::MAX);
+                self.drive = drive_root_of(&model.root_path);
                 // A rescan of the same path keeps the current folder (or its
                 // closest surviving ancestor) and the history; anything else
                 // starts at the root.
@@ -170,7 +189,7 @@ impl App {
             .as_ref()
             .map(|h| h.path.display().to_string())
             .or_else(|| self.model.as_ref().map(|m| m.root_path.clone()))
-            .or_else(|| self.drives.get(self.drive_idx).map(|d| d.root.clone()))
+            .or_else(|| self.drive.clone())
     }
 
     /// Whether restarting elevated would switch to the MFT scanner: when the
@@ -288,6 +307,7 @@ impl eframe::App for App {
 
     fn ui(&mut self, root_ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = root_ui.ctx().clone();
+        self.poll_drives();
         self.poll_scan(&ctx);
         if !self.about.open {
             self.handle_keys(&ctx);
@@ -375,6 +395,13 @@ impl eframe::App for App {
     }
 }
 
+/// `C:\` (also `c:`) -> `Some("C:\\")`; any other path -> `None`.
+fn drive_root_of(path: &str) -> Option<String> {
+    let p = std::path::Path::new(path);
+    let letter = scan::mft::drive_letter(p)?;
+    p.parent().is_none().then(|| format!("{letter}:\\"))
+}
+
 /// Quote a single command-line argument for `CommandLineToArgvW`, which
 /// treats backslashes before a closing quote as escapes: `"D:\My Dir\"`
 /// would swallow its closing quote, so trailing backslashes are doubled.
@@ -388,7 +415,16 @@ pub fn quote_arg(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::quote_arg;
+    use super::{drive_root_of, quote_arg};
+
+    #[test]
+    fn drive_roots() {
+        assert_eq!(drive_root_of(r"C:\").as_deref(), Some(r"C:\"));
+        assert_eq!(drive_root_of("d:").as_deref(), Some(r"D:\"));
+        assert_eq!(drive_root_of(r"D:\Projects"), None);
+        assert_eq!(drive_root_of(r"\\server\share"), None);
+        assert_eq!(drive_root_of(""), None);
+    }
 
     #[test]
     fn quoting() {

@@ -52,68 +52,66 @@ fn wide_path(p: &Path) -> Vec<u16> {
     p.as_os_str().encode_wide().chain(std::iter::once(0)).collect()
 }
 
-/// Enumerate logical drives with label, type and capacity.
-pub fn list_drives() -> Vec<Drive> {
-    use windows_sys::Win32::Storage::FileSystem::{
-        GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW,
-    };
+/// Roots of the logical drives (`C:\`), from a bitmask: instant, no I/O.
+pub fn drive_roots() -> Vec<String> {
+    use windows_sys::Win32::Storage::FileSystem::GetLogicalDrives;
+    let mask = unsafe { GetLogicalDrives() };
+    (0..26u8)
+        .filter(|i| mask & (1 << i) != 0)
+        .map(|i| format!("{}:\\", (b'A' + i) as char))
+        .collect()
+}
+
+/// Label, type, file system and capacity of the drive at `root`; `None` if
+/// it is not ready (empty card reader, etc.). This touches the volume, so a
+/// disconnected network drive can take seconds.
+pub fn drive_info(root: &str) -> Option<Drive> {
+    use windows_sys::Win32::Storage::FileSystem::{GetDriveTypeW, GetVolumeInformationW};
     // Values of DRIVE_* from winbase.h.
     const DRIVE_REMOVABLE: u32 = 2;
     const DRIVE_FIXED: u32 = 3;
     const DRIVE_REMOTE: u32 = 4;
     const DRIVE_CDROM: u32 = 5;
     const DRIVE_RAMDISK: u32 = 6;
-    let mask = unsafe { GetLogicalDrives() };
-    let mut out = Vec::new();
-    for i in 0..26u32 {
-        if mask & (1 << i) == 0 {
-            continue;
-        }
-        let root = format!("{}:\\", (b'A' + i as u8) as char);
-        let wroot = wide(&root);
-        let kind = match unsafe { GetDriveTypeW(wroot.as_ptr()) } {
-            DRIVE_FIXED => DriveKind::Fixed,
-            DRIVE_REMOVABLE => DriveKind::Removable,
-            DRIVE_REMOTE => DriveKind::Remote,
-            DRIVE_CDROM => DriveKind::CdRom,
-            DRIVE_RAMDISK => DriveKind::RamDisk,
-            _ => DriveKind::Unknown,
-        };
-        let mut label_buf = [0u16; 261];
-        let mut fs_buf = [0u16; 261];
-        let ok = unsafe {
-            GetVolumeInformationW(
-                wroot.as_ptr(),
-                label_buf.as_mut_ptr(),
-                label_buf.len() as u32,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                fs_buf.as_mut_ptr(),
-                fs_buf.len() as u32,
-            )
-        };
-        if ok == 0 {
-            // Not ready (empty CD drive etc.) — skip entirely.
-            continue;
-        }
-        let from_buf = |b: &[u16]| {
-            let len = b.iter().position(|&c| c == 0).unwrap_or(b.len());
-            String::from_utf16_lossy(&b[..len])
-        };
-        let label = from_buf(&label_buf);
-        let fs = from_buf(&fs_buf);
-        let space = disk_space(Path::new(&root)).unwrap_or_default();
-        out.push(Drive {
-            root,
-            label,
-            fs,
-            kind,
-            total: space.total,
-            free: space.free,
-        });
+    let wroot = wide(root);
+    let kind = match unsafe { GetDriveTypeW(wroot.as_ptr()) } {
+        DRIVE_FIXED => DriveKind::Fixed,
+        DRIVE_REMOVABLE => DriveKind::Removable,
+        DRIVE_REMOTE => DriveKind::Remote,
+        DRIVE_CDROM => DriveKind::CdRom,
+        DRIVE_RAMDISK => DriveKind::RamDisk,
+        _ => DriveKind::Unknown,
+    };
+    let mut label_buf = [0u16; 261];
+    let mut fs_buf = [0u16; 261];
+    let ok = unsafe {
+        GetVolumeInformationW(
+            wroot.as_ptr(),
+            label_buf.as_mut_ptr(),
+            label_buf.len() as u32,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            fs_buf.as_mut_ptr(),
+            fs_buf.len() as u32,
+        )
+    };
+    if ok == 0 {
+        return None;
     }
-    out
+    let from_buf = |b: &[u16]| {
+        let len = b.iter().position(|&c| c == 0).unwrap_or(b.len());
+        String::from_utf16_lossy(&b[..len])
+    };
+    let space = disk_space(Path::new(root)).unwrap_or_default();
+    Some(Drive {
+        root: root.to_string(),
+        label: from_buf(&label_buf),
+        fs: from_buf(&fs_buf),
+        kind,
+        total: space.total,
+        free: space.free,
+    })
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

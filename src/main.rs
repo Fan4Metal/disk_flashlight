@@ -125,9 +125,8 @@ fn elevate_for_mft(target: Option<&std::path::Path>) -> bool {
     let useful = match target {
         None => true,
         Some(p) => scan::mft::drive_letter(p).is_some_and(|letter| {
-            scan::win::list_drives().iter().any(|d| {
-                d.root.starts_with(letter) && d.fs.eq_ignore_ascii_case("NTFS")
-            })
+            scan::win::drive_info(&format!("{letter}:\\"))
+                .is_some_and(|d| d.fs.eq_ignore_ascii_case("NTFS"))
         }),
     };
     if !useful {
@@ -250,6 +249,17 @@ fn bench(path: PathBuf, allow_mft: bool) -> anyhow::Result<()> {
         t.elapsed().as_secs_f64() * 1e3,
         top.len()
     );
+
+    // Drive picker: each drive is queried on its own thread at start-up.
+    for root in scan::win::drive_roots() {
+        let t = Instant::now();
+        let info = scan::win::drive_info(&root);
+        println!(
+            "drive {root}:  {:.2}ms  ({})",
+            t.elapsed().as_secs_f64() * 1e3,
+            info.map_or("not ready".into(), |d| format!("{:?}, {}", d.kind, d.fs))
+        );
+    }
 
     // Name search over the whole scan, run on every keystroke in the UI.
     for query in ["d", "dll", "setup", "а"] {
