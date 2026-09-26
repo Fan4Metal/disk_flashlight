@@ -58,9 +58,12 @@ disk_flashlight.exe              # opens the window; a drive is picked from the 
 disk_flashlight.exe D:\Projects  # scans the given path on start-up
 disk_flashlight.exe --bench C:\  # command-line benchmark of the scanner and layout
 disk_flashlight.exe --bench C:\ --walk  # the same benchmark with the MFT scanner disabled
+disk_flashlight.exe --version    # prints the version
 ```
 
 Setting the environment variable `RUST_LOG=disk_flashlight=debug` prints per-phase timings of the MFT scanner.
+
+The version is shown in the window title.
 
 Keyboard shortcuts: `Backspace` goes up, `Alt+Left` and `Alt+Right` move through history, `F5` rescans. The mouse wheel over the chart changes its zoom.
 

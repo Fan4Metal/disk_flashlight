@@ -44,6 +44,7 @@ Data flows in one direction: `scan` → `model` → `layout` → `render` → `u
 
 - Commits in this repository end with a `Co-Authored-By:` trailer naming the Claude model doing the work, e.g. `Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>` (this overrides the global "no Co-Authored-By" rule for this repo only).
 - Keep the model and layout allocation-free on hot paths; the chart must stay responsive on ~1M-node trees (benchmarks in `PLAN.md`: C:\ with 917k nodes scans in ~8.5 s cold, layout + mesh ≈ 1 ms).
+- The version comes from `Cargo.toml` via `main::VERSION` and appears in the window title (`Disk Flashlight 0.1.0`), `--version`, the exe version resource and the installer; bump it only in `Cargo.toml`. Match the window by title prefix, not exact title. The release exe is GUI-subsystem, so CLI modes (`--bench`, `--version`, `--help`) call `AttachConsole` to print when run from a console.
 - Node ids are `u32` indices; `NO_NODE` (`u32::MAX`) is the null parent. Root of a scan is always id 0.
 - Palette and layout tunables are grouped in `render::Palette` and `layout::LayoutParams` rather than scattered as literals.
 - GUI checks: capture the app's own window with `PrintWindow` (no focus change). Before any simulated mouse/keyboard input, warn the user so they keep their hands off the machine.

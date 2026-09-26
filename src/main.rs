@@ -15,8 +15,34 @@ use std::time::Instant;
 
 use format::{human_size, thousands};
 
+/// Version from Cargo.toml, shared by the window title, `--version`, the
+/// installer and the GitHub release tag.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// The release build is a GUI-subsystem program with no console of its own,
+/// so text printed by the command-line modes would be lost when started from
+/// cmd or PowerShell. Attach to the parent's console in that case; output
+/// that is already redirected (a pipe or a file) is left untouched.
+#[cfg(windows)]
+fn attach_parent_console() {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
+    if std::io::stdout().as_raw_handle().is_null() {
+        unsafe {
+            AttachConsole(ATTACH_PARENT_PROCESS);
+        }
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     env_logger::init();
+    let cli_mode = std::env::args()
+        .skip(1)
+        .any(|a| matches!(a.as_str(), "--bench" | "--version" | "-V" | "-h" | "--help"));
+    #[cfg(windows)]
+    if cli_mode {
+        attach_parent_console();
+    }
     let mut args = std::env::args().skip(1);
     let mut initial: Option<PathBuf> = None;
     let mut bench_path: Option<PathBuf> = None;
@@ -33,8 +59,13 @@ fn main() -> anyhow::Result<()> {
                 std::fs::write(&out, icon::ico(&[16, 20, 24, 32, 40, 48, 64, 256]))?;
                 return Ok(());
             }
+            "-V" | "--version" => {
+                println!("Disk Flashlight {VERSION}");
+                return Ok(());
+            }
             "-h" | "--help" => {
-                println!("disk_flashlight [PATH] | --bench PATH [--walk] | --export-icon FILE");
+                println!("Disk Flashlight {VERSION}");
+                println!("disk_flashlight [PATH] | --bench PATH [--walk] | --export-icon FILE | --version");
                 return Ok(());
             }
             other => initial = Some(normalize(other)),
@@ -46,7 +77,7 @@ fn main() -> anyhow::Result<()> {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("Disk Flashlight")
+            .with_title(format!("Disk Flashlight {VERSION}"))
             .with_inner_size([1200.0, 800.0])
             .with_min_inner_size([640.0, 420.0])
             .with_icon(egui::IconData {
