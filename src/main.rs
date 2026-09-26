@@ -241,6 +241,15 @@ fn bench(path: PathBuf, allow_mft: bool) -> anyhow::Result<()> {
             thousands(mesh.vertices.len() as u64)
         );
     }
+
+    // "Largest files" tab for the whole scan, the worst case.
+    let t = Instant::now();
+    let top = model.largest_files(0, model::Metric::Physical, 100);
+    println!(
+        "top files: {:.2}ms  ({} listed)",
+        t.elapsed().as_secs_f64() * 1e3,
+        top.len()
+    );
     Ok(())
 }
 

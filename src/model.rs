@@ -272,6 +272,42 @@ impl Model {
         }
         cur
     }
+
+    /// The `limit` largest files under `root` by `metric`, largest first.
+    /// Directories no larger than the smallest file kept so far are not
+    /// entered: nothing inside them can make the list. Among files of equal
+    /// size the choice is deterministic but otherwise unspecified.
+    pub fn largest_files(&self, root: u32, metric: Metric, limit: usize) -> Vec<u32> {
+        use std::cmp::Reverse;
+        use std::collections::BinaryHeap;
+        if limit == 0 {
+            return Vec::new();
+        }
+        // Min-heap of the best files so far.
+        let mut best: BinaryHeap<Reverse<(u64, Reverse<u32>)>> = BinaryHeap::with_capacity(limit + 1);
+        let mut stack = vec![root];
+        while let Some(dir) = stack.pop() {
+            for c in self.children(dir) {
+                let n = self.node(c);
+                let m = n.metric(metric);
+                if best.len() == limit && best.peek().is_some_and(|Reverse((min, _))| m <= *min) {
+                    continue;
+                }
+                if n.is_dir {
+                    stack.push(c);
+                } else {
+                    best.push(Reverse((m, Reverse(c))));
+                    if best.len() > limit {
+                        best.pop();
+                    }
+                }
+            }
+        }
+        best.into_sorted_vec()
+            .into_iter()
+            .map(|Reverse((_, Reverse(id)))| id)
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -306,6 +342,58 @@ mod tests {
         let sk: Vec<&str> = m.children(sub).map(|c| m.name(c)).collect();
         assert_eq!(sk, vec!["b", "a"]);
         assert_eq!(m.path(m.children(sub).next().unwrap()), "X:\\sub\\b");
+    }
+
+    #[test]
+    fn largest_files_match_brute_force() {
+        // Deterministic pseudo-random tree, 4 levels deep.
+        let mut seed = 12345u64;
+        let mut rnd = move |n: u64| {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (seed >> 33) % n
+        };
+        fn grow(rnd: &mut impl FnMut(u64) -> u64, depth: u32, name: String) -> RawDir {
+            let files = (0..rnd(6))
+                .map(|i| {
+                    let bits = rnd(20);
+                    let size = rnd(1 << bits);
+                    RawFile { name: format!("f{i}"), size, alloc: size.div_ceil(4096) * 4096 }
+                })
+                .collect();
+            let subdirs = if depth == 0 {
+                Vec::new()
+            } else {
+                (0..rnd(4)).map(|i| grow(rnd, depth - 1, format!("d{i}"))).collect()
+            };
+            RawDir { name, files, subdirs, ..Default::default() }
+        }
+        let m = Model::from_raw(grow(&mut rnd, 4, "root".into()), "X:\\".into(), 4096);
+        let under = |root: u32, mut id: u32| loop {
+            if id == root {
+                return true;
+            }
+            if id == NO_NODE {
+                return false;
+            }
+            id = m.node(id).parent;
+        };
+        let roots: Vec<u32> = (0..m.len() as u32).filter(|&i| m.node(i).is_dir).take(8).collect();
+        for &root in &roots {
+            for metric in [Metric::Logical, Metric::Physical] {
+                for limit in [0, 1, 3, 10, 1000] {
+                    let mut all: Vec<u64> = (0..m.len() as u32)
+                        .filter(|&i| !m.node(i).is_dir && under(root, i))
+                        .map(|i| m.node(i).metric(metric))
+                        .collect();
+                    all.sort_unstable_by(|a, b| b.cmp(a));
+                    all.truncate(limit);
+                    let got = m.largest_files(root, metric, limit);
+                    assert!(got.iter().all(|&i| !m.node(i).is_dir && under(root, i)));
+                    let sizes: Vec<u64> = got.iter().map(|&i| m.node(i).metric(metric)).collect();
+                    assert_eq!(sizes, all, "root {root}, {metric:?}, limit {limit}");
+                }
+            }
+        }
     }
 
     #[test]

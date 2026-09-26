@@ -11,7 +11,9 @@ use crate::model::{Metric, Model, NO_NODE};
 use crate::scan::{self, Method, ScanHandle, win::Drive};
 use crate::settings::Settings;
 use crate::ui::about::AboutDialog;
+use crate::ui::SideView;
 use crate::ui::chart::{ChartAction, ChartView};
+use crate::ui::files::FilesView;
 use crate::ui::tree::TreeView;
 
 pub struct App {
@@ -24,6 +26,8 @@ pub struct App {
     pub metric: Metric,
     pub chart: ChartView,
     pub tree: TreeView,
+    pub files: FilesView,
+    pub side: SideView,
     pub tree_hovered: Option<u32>,
     pub about: AboutDialog,
     pub status: String,
@@ -53,6 +57,8 @@ impl App {
             metric: settings.metric,
             chart: ChartView::default(),
             tree: TreeView::default(),
+            files: FilesView::default(),
+            side: settings.side_view,
             tree_hovered: None,
             about: AboutDialog::default(),
             status: "Ready".into(),
@@ -130,6 +136,7 @@ impl App {
                     _ => self.nav.reset(),
                 }
                 self.tree.reset();
+                self.files.reset();
                 self.tree.reveal(&model, self.nav.root);
                 self.model = Some(Arc::new(model));
                 self.chart.invalidate();
@@ -254,6 +261,7 @@ impl eframe::App for App {
             metric: self.metric,
             color_mode: self.chart.palette.mode,
             follow_in_tree: self.tree.follow_hover,
+            side_view: self.side,
             last_path,
         }
         .save(storage);
@@ -295,13 +303,17 @@ impl eframe::App for App {
             .default_size(300.0)
             .min_size(160.0)
             .show(root_ui, |ui| {
-                tree_action = Some(self.tree.show(
-                    ui,
-                    &model,
-                    self.nav.root,
-                    self.metric,
-                    self.chart.hovered,
-                ));
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut self.side, SideView::Folders, "Folders");
+                    ui.selectable_value(&mut self.side, SideView::LargestFiles, "Largest files")
+                        .on_hover_text("The 100 largest files under the centre of the chart");
+                });
+                ui.separator();
+                let (root, metric, hovered) = (self.nav.root, self.metric, self.chart.hovered);
+                tree_action = Some(match self.side {
+                    SideView::Folders => self.tree.show(ui, &model, root, metric, hovered),
+                    SideView::LargestFiles => self.files.show(ui, &model, root, metric, hovered),
+                });
             });
         if let Some(a) = tree_action {
             self.tree_hovered = a.hovered;

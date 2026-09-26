@@ -4,17 +4,21 @@
 
 use crate::model::Metric;
 use crate::render::ColorMode;
+use crate::ui::SideView;
 
 const METRIC: &str = "metric";
 const COLOR_MODE: &str = "color_mode";
 const FOLLOW_IN_TREE: &str = "follow_in_tree";
 const LAST_PATH: &str = "last_path";
+const SIDE_VIEW: &str = "side_view";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
     pub metric: Metric,
     pub color_mode: ColorMode,
     pub follow_in_tree: bool,
+    /// What the left panel shows.
+    pub side_view: SideView,
     /// Path of the last scan, offered in the path field on the next start.
     pub last_path: Option<String>,
 }
@@ -25,6 +29,7 @@ impl Default for Settings {
             metric: Metric::Physical,
             color_mode: ColorMode::default(),
             follow_in_tree: true,
+            side_view: SideView::default(),
             last_path: None,
         }
     }
@@ -51,6 +56,11 @@ impl Settings {
                 Some("false") => false,
                 _ => d.follow_in_tree,
             },
+            side_view: match get(SIDE_VIEW).as_deref() {
+                Some("folders") => SideView::Folders,
+                Some("largest_files") => SideView::LargestFiles,
+                _ => d.side_view,
+            },
             last_path: get(LAST_PATH).filter(|p| !p.is_empty()),
         }
     }
@@ -66,7 +76,12 @@ impl Settings {
         };
         storage.set_string(METRIC, metric.into());
         storage.set_string(COLOR_MODE, color_mode.into());
+        let side_view = match self.side_view {
+            SideView::Folders => "folders",
+            SideView::LargestFiles => "largest_files",
+        };
         storage.set_string(FOLLOW_IN_TREE, self.follow_in_tree.to_string());
+        storage.set_string(SIDE_VIEW, side_view.into());
         storage.set_string(LAST_PATH, self.last_path.clone().unwrap_or_default());
     }
 }
@@ -99,6 +114,7 @@ mod tests {
             metric: Metric::Logical,
             color_mode: ColorMode::Depth,
             follow_in_tree: false,
+            side_view: SideView::LargestFiles,
             last_path: Some(r"D:\Projects".into()),
         };
         let mut storage = MemStorage::default();
