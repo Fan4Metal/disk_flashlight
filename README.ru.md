@@ -6,7 +6,7 @@ Disk Flashlight — анализатор занятого места на дис
 
 ![Disk Flashlight: диск C: в виде секторной диаграммы, слева дерево каталогов](images/screenshot.png)
 
-Проект написан на Rust и использует [egui](https://github.com/emilk/egui) с backend wgpu. Работа продолжается; текущее состояние соответствует MVP, описанному в [PLAN.md](PLAN.md).
+Проект написан на Rust и использует [egui](https://github.com/emilk/egui) с backend wgpu.
 
 ## Возможности
 

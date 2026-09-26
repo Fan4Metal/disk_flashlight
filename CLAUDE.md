@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Disk Flashlight is a Windows-only disk space analyzer (OverDisk-style sunburst chart) written in Rust with egui/eframe 0.36 on wgpu. `PLAN.md` holds the original design plan and status; `README.md` / `README.ru.md` are the user-facing docs and must be kept in sync (both languages, cross-linked, formal tone).
+Disk Flashlight is a Windows-only disk space analyzer (OverDisk-style sunburst chart) written in Rust with egui/eframe 0.36 on wgpu. `README.md` / `README.ru.md` are the user-facing docs and must be kept in sync (both languages, cross-linked, formal tone).
 
 ## Commands
 
@@ -43,7 +43,7 @@ Data flows in one direction: `scan` → `model` → `layout` → `render` → `u
 ## Conventions
 
 - Commits in this repository end with a `Co-Authored-By:` trailer naming the Claude model doing the work, e.g. `Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>` (this overrides the global "no Co-Authored-By" rule for this repo only).
-- Keep the model and layout allocation-free on hot paths; the chart must stay responsive on ~1M-node trees (benchmarks in `PLAN.md`: C:\ with 917k nodes scans in ~8.5 s cold, layout + mesh ≈ 1 ms).
+- Keep the model and layout allocation-free on hot paths; the chart must stay responsive on ~1M-node trees (reference: C:\ with 917k nodes scans in ~8.5 s cold, layout + mesh ≈ 1 ms).
 - The version comes from `Cargo.toml` via `main::VERSION` and appears in the window title (`Disk Flashlight 0.1.0`), `--version`, the exe version resource and the installer; bump it only in `Cargo.toml`. Match the window by title prefix, not exact title. The release exe is GUI-subsystem, so CLI modes (`--bench`, `--version`, `--help`) call `AttachConsole` to print when run from a console.
 - `--mft [PATH]` (`main::elevate_for_mft`) relaunches elevated via `win::relaunch_elevated` with the same path and exits, using the same usefulness rule as the Fast scan button (NTFS volume root, or no path); otherwise, or if UAC is declined, it starts normally. An elevated instance cannot be stopped or captured with PrintWindow from the non-elevated tool shell (UIPI); read its window with `CopyFromScreen` and ask the user to close it.
 - Node ids are `u32` indices; `NO_NODE` (`u32::MAX`) is the null parent. Root of a scan is always id 0.

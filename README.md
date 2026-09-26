@@ -6,7 +6,7 @@ Disk Flashlight is a disk space analyzer for Windows in the spirit of OverDisk. 
 
 ![Disk Flashlight showing drive C: as a sunburst chart, with the directory tree on the left](images/screenshot.png)
 
-The project is written in Rust and uses [egui](https://github.com/emilk/egui) with the wgpu backend. It is a work in progress; the current state corresponds to the MVP described in [PLAN.md](PLAN.md).
+The project is written in Rust and uses [egui](https://github.com/emilk/egui) with the wgpu backend.
 
 ## Features
 
