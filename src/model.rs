@@ -245,6 +245,33 @@ impl Model {
         }
         out
     }
+
+    /// Names on the way from the scan root down to `id` (root excluded).
+    pub fn rel_path(&self, mut id: u32) -> Vec<&str> {
+        let mut parts = Vec::new();
+        while self.nodes[id as usize].parent != NO_NODE {
+            parts.push(self.name(id));
+            id = self.nodes[id as usize].parent;
+        }
+        parts.reverse();
+        parts
+    }
+
+    /// Directory reached by following `parts` from the root: the directory
+    /// itself if it still exists, otherwise its deepest surviving ancestor.
+    pub fn find_dir(&self, parts: &[&str]) -> u32 {
+        let mut cur = 0;
+        for p in parts {
+            match self
+                .children(cur)
+                .find(|&c| self.node(c).is_dir && self.name(c) == *p)
+            {
+                Some(c) => cur = c,
+                None => break,
+            }
+        }
+        cur
+    }
 }
 
 #[cfg(test)]
@@ -279,5 +306,32 @@ mod tests {
         let sk: Vec<&str> = m.children(sub).map(|c| m.name(c)).collect();
         assert_eq!(sk, vec!["b", "a"]);
         assert_eq!(m.path(m.children(sub).next().unwrap()), "X:\\sub\\b");
+    }
+
+    #[test]
+    fn find_dir_by_path() {
+        let raw = RawDir {
+            name: "root".into(),
+            files: vec![file("sub", 5)],
+            subdirs: vec![RawDir {
+                name: "sub".into(),
+                subdirs: vec![RawDir { name: "deep".into(), ..Default::default() }],
+                files: vec![file("f", 1)],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let m = Model::from_raw(raw, "X:\\".into(), 4096);
+        let sub = m.children(0).find(|&c| m.node(c).is_dir).unwrap();
+        let deep = m.children(sub).find(|&c| m.node(c).is_dir).unwrap();
+        assert_eq!(m.rel_path(deep), vec!["sub", "deep"]);
+        assert!(m.rel_path(0).is_empty());
+        assert_eq!(m.find_dir(&m.rel_path(deep)), deep);
+        assert_eq!(m.find_dir(&[]), 0);
+        // A vanished directory falls back to its closest ancestor.
+        assert_eq!(m.find_dir(&["sub", "gone", "x"]), sub);
+        // Files are never matched, even with the same name.
+        assert_eq!(m.find_dir(&["sub", "f"]), sub);
+        assert_eq!(m.find_dir(&["nope"]), 0);
     }
 }

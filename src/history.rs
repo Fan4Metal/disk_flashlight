@@ -14,6 +14,21 @@ impl History {
         *self = Self::default();
     }
 
+    /// Translate every id through `f` (e.g. into a rescanned model), dropping
+    /// entries that collapse onto their neighbour or onto the new root.
+    pub fn remap(&mut self, mut f: impl FnMut(u32) -> u32) {
+        self.root = f(self.root);
+        for stack in [&mut self.back, &mut self.fwd] {
+            for id in stack.iter_mut() {
+                *id = f(*id);
+            }
+            stack.dedup();
+            if stack.last() == Some(&self.root) {
+                stack.pop();
+            }
+        }
+    }
+
     pub fn can_back(&self) -> bool {
         !self.back.is_empty()
     }
@@ -82,5 +97,23 @@ mod tests {
         h.reset();
         assert_eq!(h.root, 0);
         assert!(!h.can_back());
+    }
+
+    #[test]
+    fn remap_collapses_duplicates() {
+        let mut h = History::default();
+        for id in [1, 2, 3, 4] {
+            h.navigate(id);
+        }
+        h.back(); // back: 0 1 2, root 3, fwd: 4
+        // 2 and 3 vanished and fall back to 1; 4 becomes 40.
+        h.remap(|id| match id {
+            2 | 3 => 1,
+            4 => 40,
+            x => x,
+        });
+        assert_eq!(h.root, 1);
+        assert_eq!(h.back, vec![0]);
+        assert_eq!(h.fwd, vec![40]);
     }
 }

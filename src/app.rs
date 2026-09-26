@@ -106,9 +106,18 @@ impl App {
                 {
                     self.drive_idx = i;
                 }
-                self.model = Some(Arc::new(model));
-                self.nav.reset();
+                // A rescan of the same path keeps the current folder (or its
+                // closest surviving ancestor) and the history; anything else
+                // starts at the root.
+                match self.model.take() {
+                    Some(old) if old.root_path.eq_ignore_ascii_case(&model.root_path) => {
+                        self.nav.remap(|id| model.find_dir(&old.rel_path(id)));
+                    }
+                    _ => self.nav.reset(),
+                }
                 self.tree.reset();
+                self.tree.reveal(&model, self.nav.root);
+                self.model = Some(Arc::new(model));
                 self.chart.invalidate();
                 self.scan = None;
             }
