@@ -152,13 +152,13 @@ impl App {
             .or_else(|| self.drives.get(self.drive_idx).map(|d| d.root.clone()))
     }
 
-    /// Whether restarting elevated would switch to the MFT scanner: only
-    /// when the target is the root of an NTFS drive.
+    /// Whether restarting elevated would switch to the MFT scanner: when the
+    /// target is on a local NTFS drive.
     pub fn fast_scan_available(&self) -> bool {
         let Some(target) = self.scan_target() else {
             return false;
         };
-        let Some(letter) = scan::mft::volume_letter(std::path::Path::new(&target)) else {
+        let Some(letter) = scan::mft::drive_letter(std::path::Path::new(&target)) else {
             return false;
         };
         self.drives.iter().any(|d| {

@@ -115,8 +115,8 @@ fn main() -> anyhow::Result<()> {
 }
 
 /// `--mft`: restart elevated when that enables the MFT scanner, i.e. when
-/// not elevated yet and the target is the root of an NTFS drive (or no
-/// target was given, so the drive is picked later). Returns `true` if the
+/// not elevated yet and the target is on a local NTFS drive (or no target
+/// was given, so the drive is picked later). Returns `true` if the
 /// elevated copy was started; a declined UAC prompt continues without it.
 fn elevate_for_mft(target: Option<&std::path::Path>) -> bool {
     if scan::win::is_elevated() {
@@ -124,14 +124,14 @@ fn elevate_for_mft(target: Option<&std::path::Path>) -> bool {
     }
     let useful = match target {
         None => true,
-        Some(p) => scan::mft::volume_letter(p).is_some_and(|letter| {
+        Some(p) => scan::mft::drive_letter(p).is_some_and(|letter| {
             scan::win::list_drives().iter().any(|d| {
                 d.root.starts_with(letter) && d.fs.eq_ignore_ascii_case("NTFS")
             })
         }),
     };
     if !useful {
-        log::info!("--mft ignored: target is not the root of an NTFS drive");
+        log::info!("--mft ignored: target is not on a local NTFS drive");
         return false;
     }
     let mut args = String::from("--mft");

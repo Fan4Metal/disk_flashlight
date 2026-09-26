@@ -1,8 +1,9 @@
 //! Background scanning: spawns a worker thread and reports progress.
 //!
-//! Volume roots on NTFS are scanned through the MFT when the process has
-//! administrator rights; everything else (subdirectories, other file systems,
-//! no elevation) falls back to a parallel directory walk.
+//! Paths on local NTFS volumes are scanned through the MFT when the process
+//! has administrator rights (a folder is cut out of the whole volume's
+//! table); everything else (other file systems, network paths, no elevation)
+//! falls back to a parallel directory walk.
 
 pub mod mft;
 pub mod walk;
@@ -36,7 +37,7 @@ pub type ScanResult = anyhow::Result<(Model, ScanInfo)>;
 /// Scan `path` with the fastest available method.
 pub fn scan(path: &Path, progress: &Progress, allow_mft: bool) -> ScanResult {
     let mut fallback_reason = None;
-    if allow_mft && mft::volume_letter(path).is_some() {
+    if allow_mft && mft::drive_letter(path).is_some() {
         match mft::scan(path, progress) {
             Ok(m) => {
                 return Ok((

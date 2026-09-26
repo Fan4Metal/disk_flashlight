@@ -65,18 +65,37 @@ struct NtfsVolumeData {
     mft_zone_end: i64,
 }
 
-/// `C:\` -> `Some('C')`; any other path (subdirectory, UNC) -> `None`.
-pub fn volume_letter(path: &Path) -> Option<char> {
-    let s = path.to_str()?.trim_end_matches(['\\', '/']);
-    let b = s.as_bytes();
-    (b.len() == 2 && b[0].is_ascii_alphabetic() && b[1] == b':')
+/// Drive letter of a local path: `C:\` and `C:\Users` -> `Some('C')`, also
+/// with a `\\?\` prefix; UNC and relative paths -> `None`.
+pub fn drive_letter(path: &Path) -> Option<char> {
+    let s = path.to_str()?;
+    let b = s.strip_prefix(r"\\?\").unwrap_or(s).as_bytes();
+    let rooted = b.len() == 2 || matches!(b.get(2), Some(b'\\' | b'/'));
+    (b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':' && rooted)
         .then(|| b[0].to_ascii_uppercase() as char)
 }
 
-/// Scan a whole NTFS volume through its MFT. Fails (so the caller can fall
-/// back to a directory walk) when not elevated or not NTFS.
+/// Volume letter of `path` and the directory names leading to it from the
+/// volume root, after resolving junctions and symbolic links on the way.
+fn locate(path: &Path) -> anyhow::Result<(char, Vec<String>)> {
+    let canon =
+        std::fs::canonicalize(path).with_context(|| format!("resolving {}", path.display()))?;
+    let letter = drive_letter(&canon).context("MFT scan needs a path on a local drive")?;
+    let s = canon.to_str().context("path is not valid Unicode")?;
+    let inner = &s.strip_prefix(r"\\?\").unwrap_or(s)[2..];
+    let names = inner
+        .split(['\\', '/'])
+        .filter(|c| !c.is_empty())
+        .map(String::from)
+        .collect();
+    Ok((letter, names))
+}
+
+/// Scan a directory on an NTFS volume through the volume's MFT: the whole
+/// table is read and the tree under `root` is kept. Fails (so the caller can
+/// fall back to a directory walk) when not elevated or not NTFS.
 pub fn scan(root: &Path, progress: &Progress) -> anyhow::Result<Model> {
-    let letter = volume_letter(root).context("MFT scan needs a volume root")?;
+    let (letter, names) = locate(root)?;
     let device = format!(r"\\.\{letter}:");
     let t = Instant::now();
     let mut vol = File::open(&device).with_context(|| format!("opening {device}"))?;
@@ -114,10 +133,17 @@ pub fn scan(root: &Path, progress: &Progress) -> anyhow::Result<Model> {
 
     let t = Instant::now();
     merge_extensions(&mut recs);
-    let raw = build_tree(recs, letter);
+    // A volume root keeps its canonical form (`C:\`); a folder keeps the
+    // path as given, like the directory walk.
+    let (root_name, root_path) = match names.last() {
+        None => (format!("{letter}:"), format!("{letter}:\\")),
+        Some(last) => (last.clone(), root.to_string_lossy().into_owned()),
+    };
+    let raw = build_tree(recs, &names, root_name)
+        .with_context(|| format!("{} not found in the MFT", root.display()))?;
     let t_tree = t.elapsed();
     let t = Instant::now();
-    let model = Model::from_raw(raw, format!("{letter}:\\"), cluster);
+    let model = Model::from_raw(raw, root_path, cluster);
     log::debug!(
         "MFT {letter}: {} MiB, read+parse {:?}, link {:?}, pack {:?}",
         mft_len >> 20,
@@ -444,9 +470,10 @@ fn merge_extensions(recs: &mut [Rec]) {
     }
 }
 
-/// Link flat records into a nested tree rooted at record 5. Names are moved
-/// out of `recs`, not copied.
-fn build_tree(mut recs: Vec<Rec>, letter: char) -> RawDir {
+/// Link flat records into a nested tree for the directory reached from the
+/// volume root (record 5) through `names`; `None` if it is not there. Names
+/// are moved out of `recs`, not copied.
+fn build_tree(mut recs: Vec<Rec>, names: &[String], root_name: String) -> Option<RawDir> {
     let n = recs.len();
     let valid = |i: usize| {
         let r = &recs[i];
@@ -506,14 +533,29 @@ fn build_tree(mut recs: Vec<Rec>, letter: char) -> RawDir {
         d
     }
 
-    let root = ROOT_RECORD as usize;
-    if root >= n {
-        return RawDir {
-            name: format!("{letter}:"),
-            ..Default::default()
-        };
+    let mut id = ROOT_RECORD as usize;
+    if id >= n {
+        return None;
     }
-    build(&mut recs, &start, &kids, root, format!("{letter}:"), 0)
+    for name in names {
+        let subdirs = || {
+            kids[start[id] as usize..start[id + 1] as usize]
+                .iter()
+                .map(|&c| c as usize)
+                .filter(|&c| recs[c].is_dir)
+        };
+        // canonicalize() reports names as stored, so an exact match is the
+        // rule; NTFS itself ignores case, which the fallback covers.
+        let lower = name.to_lowercase();
+        id = subdirs()
+            .find(|&c| recs[c].name.as_deref() == Some(name.as_str()))
+            .or_else(|| {
+                subdirs().find(|&c| {
+                    recs[c].name.as_deref().is_some_and(|n| n.to_lowercase() == lower)
+                })
+            })?;
+    }
+    Some(build(&mut recs, &start, &kids, id, root_name, 0))
 }
 
 // --- record / attribute parsing helpers ------------------------------------
@@ -623,11 +665,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn volume_letters() {
-        assert_eq!(volume_letter(Path::new(r"C:\")), Some('C'));
-        assert_eq!(volume_letter(Path::new("d:")), Some('D'));
-        assert_eq!(volume_letter(Path::new(r"D:\Projects")), None);
-        assert_eq!(volume_letter(Path::new(r"\\server\share")), None);
+    fn drive_letters() {
+        assert_eq!(drive_letter(Path::new(r"C:\")), Some('C'));
+        assert_eq!(drive_letter(Path::new("d:")), Some('D'));
+        assert_eq!(drive_letter(Path::new(r"D:\Projects")), Some('D'));
+        assert_eq!(drive_letter(Path::new(r"\\?\e:\Users\x")), Some('E'));
+        assert_eq!(drive_letter(Path::new("D:Projects")), None);
+        assert_eq!(drive_letter(Path::new(r"\\server\share")), None);
+        assert_eq!(drive_letter(Path::new(r"\\?\UNC\server\share")), None);
     }
 
     #[test]
@@ -771,7 +816,8 @@ mod tests {
         ]);
         let mut recs: Vec<Rec> = raw.iter_mut().map(|r| parse_record(r)).collect();
         merge_extensions(&mut recs);
-        let m = Model::from_raw(build_tree(recs, 'X'), "X:\\".into(), 4096);
+        let tree = build_tree(recs.clone(), &[], "X:".into()).unwrap();
+        let m = Model::from_raw(tree, "X:\\".into(), 4096);
         let root = m.node(0);
         assert_eq!(m.name(0), "X:");
         assert_eq!((root.files, root.dirs), (2, 1));
@@ -779,5 +825,14 @@ mod tests {
         let first = m.children(0).next().unwrap();
         assert_eq!(m.name(first), "Users");
         assert_eq!(m.path(m.children(first).next().unwrap()), "X:\\Users\\big.bin");
+
+        // A folder is found by name, ignoring case, and becomes the root.
+        let sub = build_tree(recs.clone(), &["users".into()], "Users".into()).unwrap();
+        let m = Model::from_raw(sub, r"X:\Users".into(), 4096);
+        assert_eq!((m.name(0), m.node(0).files, m.node(0).size), ("Users", 1, 5000));
+        assert_eq!(m.path(m.children(0).next().unwrap()), r"X:\Users\big.bin");
+        // Files and missing names do not match.
+        assert!(build_tree(recs.clone(), &["root.txt".into()], "x".into()).is_none());
+        assert!(build_tree(recs, &["Users".into(), "nope".into()], "x".into()).is_none());
     }
 }
