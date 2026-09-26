@@ -86,6 +86,13 @@ fn main() -> anyhow::Result<()> {
                 height: 64,
             }),
         centered: true,
+        // 4x MSAA: the chart is one big triangle mesh without egui's edge
+        // feathering, so thin sectors and arcs would otherwise be jagged.
+        // DF_MSAA=1 turns it off (for comparison or a GPU without MSAA).
+        multisampling: std::env::var("DF_MSAA")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4),
         ..Default::default()
     };
     eframe::run_native(
@@ -162,7 +169,8 @@ fn bench(path: PathBuf, allow_mft: bool) -> anyhow::Result<()> {
     let params = layout::LayoutParams::default();
     let center = egui::Pos2::new(600.0, 400.0);
     let t = Instant::now();
-    let l = layout::build(&model, 0, model::Metric::Physical, center, 380.0, &params);
+    let view = egui::Rect::from_center_size(center, egui::vec2(1200.0, 800.0));
+    let l = layout::build(&model, 0, model::Metric::Physical, center, 380.0, view, &params);
     let layout_time = t.elapsed();
     let t = Instant::now();
     let mesh = render::build_mesh(&model, &l, &render::Palette::default());
@@ -178,6 +186,22 @@ fn bench(path: PathBuf, allow_mft: bool) -> anyhow::Result<()> {
         thousands(mesh.vertices.len() as u64),
         thousands((mesh.indices.len() / 3) as u64)
     );
+
+    // Zoomed in: the 1200x800 view looks at the rings above the centre, so
+    // most of the chart is culled. Work must stay bounded by the view.
+    for zoom in [10.0f32, 50.0, 200.0] {
+        let radius = 380.0 * zoom;
+        let c = egui::Pos2::new(600.0, 400.0 + radius * 0.45);
+        let t = Instant::now();
+        let l = layout::build(&model, 0, model::Metric::Physical, c, radius, view, &params);
+        let mesh = render::build_mesh(&model, &l, &render::Palette::default());
+        println!(
+            "zoom {zoom:>3}: {:.2}ms  ({} sectors, {} vertices)",
+            t.elapsed().as_secs_f64() * 1e3,
+            thousands(l.sector_count() as u64),
+            thousands(mesh.vertices.len() as u64)
+        );
+    }
     Ok(())
 }
 

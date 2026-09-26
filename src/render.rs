@@ -45,6 +45,8 @@ pub struct Palette {
     pub hue_smallest: f32,
     /// Share of saturation lost by the outermost visible ring (0 = none).
     pub fade_max: f32,
+    /// Saturation of "N smaller items" group sectors.
+    pub sat_group: f32,
 }
 
 impl Default for Palette {
@@ -59,6 +61,7 @@ impl Default for Palette {
             hue_largest: 0.0,
             hue_smallest: 56.0,
             fade_max: 0.6,
+            sat_group: 0.22,
         }
     }
 }
@@ -91,6 +94,21 @@ impl Palette {
                 Color32::from(Hsva::new(hue / 360.0, sat * (1.0 - fade), self.val_even, 1.0))
             }
         }
+    }
+
+    /// Colour of a group of merged small items: a muted, warm neutral that
+    /// reads as "the rest" next to the coloured sectors.
+    pub fn group_color(&self, ring: usize, n_rings: usize) -> Color32 {
+        let hue = match self.mode {
+            ColorMode::Size => self.hue_smallest,
+            ColorMode::Depth => self.hues[ring.min(self.hues.len() - 1)],
+        };
+        let fade = if n_rings > 1 {
+            self.fade_max * ring.min(n_rings - 1) as f32 / (n_rings - 1) as f32
+        } else {
+            0.0
+        };
+        Color32::from(Hsva::new(hue / 360.0, self.sat_group * (1.0 - fade), self.val_odd, 1.0))
     }
 }
 
@@ -136,6 +154,19 @@ fn with_gap(s: &Sector, r_out: f32) -> (f32, f32) {
     }
 }
 
+/// Screen-space margin kept around the view when clipping arcs, so that
+/// clipped ends (and their outlines) stay off screen.
+const CLIP_MARGIN_PX: f32 = 16.0;
+
+/// Visible pieces of `[a0, a1]` at radius `r`. At high zoom only a small
+/// part of a large sector is on screen; tessellating just that part keeps
+/// the vertex count bounded by the window size.
+#[inline]
+fn visible_pieces(layout: &Layout, a0: f32, a1: f32, r: f32) -> impl Iterator<Item = (f32, f32)> {
+    let margin = CLIP_MARGIN_PX / r.max(1.0);
+    layout.view.clip(a0, a1, margin).into_iter().flatten()
+}
+
 /// Build the full chart mesh. One draw call regardless of sector count.
 pub fn build_mesh(model: &Model, layout: &Layout, palette: &Palette) -> Mesh {
     let mut mesh = Mesh::default();
@@ -150,10 +181,28 @@ pub fn build_mesh(model: &Model, layout: &Layout, palette: &Palette) -> Mesh {
     for (ring, sectors) in layout.rings.iter().enumerate() {
         let (r_in, r_out) = layout.radii[ring];
         for (i, s) in sectors.iter().enumerate() {
-            let is_dir = model.node(s.node).is_dir;
-            let color = palette.color(ring, i, n_rings, s.rel, is_dir);
+            let color = if s.is_group() {
+                palette.group_color(ring, n_rings)
+            } else {
+                palette.color(ring, i, n_rings, s.rel, model.node(s.node).is_dir)
+            };
             let (a0, a1) = with_gap(s, r_out);
-            push_sector(&mut mesh, layout.center, r_in, r_out, a0, a1, color);
+            for (p0, p1) in visible_pieces(layout, a0, a1, r_out) {
+                push_sector(&mut mesh, layout.center, r_in, r_out, p0, p1, color);
+            }
+        }
+    }
+    mesh
+}
+
+/// Filled centre disc, tessellated like the sectors so it stays round at
+/// any zoom (egui's own circles use a fixed number of segments).
+pub fn disc_mesh(layout: &Layout, color: Color32) -> Mesh {
+    let mut mesh = Mesh::default();
+    let r = layout.center_radius();
+    if layout.view.radial(0.0, r) {
+        for (p0, p1) in visible_pieces(layout, 0.0, TAU, r) {
+            push_sector(&mut mesh, layout.center, 0.0, r, p0, p1, color);
         }
     }
     mesh
@@ -165,32 +214,47 @@ pub fn highlight_mesh(layout: &Layout, ring: usize, idx: usize, color: Color32) 
     let (r_in, r_out) = layout.radii[ring];
     let s = &layout.rings[ring][idx];
     let (a0, a1) = with_gap(s, r_out);
-    push_sector(&mut mesh, layout.center, r_in, r_out, a0, a1, color);
+    for (p0, p1) in visible_pieces(layout, a0, a1, r_out) {
+        push_sector(&mut mesh, layout.center, r_in, r_out, p0, p1, color);
+    }
     mesh
 }
 
-/// Closed polyline around one sector, for stroking an outline.
-pub fn sector_outline(layout: &Layout, ring: usize, idx: usize) -> Vec<Pos2> {
+/// Closed polylines around the visible parts of one sector, for stroking an
+/// outline.
+pub fn sector_outline(layout: &Layout, ring: usize, idx: usize) -> Vec<Vec<Pos2>> {
     let (r_in, r_out) = layout.radii[ring];
     let s = &layout.rings[ring][idx];
     let (a0, a1) = with_gap(s, r_out);
-    let span = a1 - a0;
-    let segments = ((span * r_out) / SEGMENT_PX).ceil().max(1.0) as usize;
-    let mut pts = Vec::with_capacity(2 * (segments + 1));
-    for i in 0..=segments {
-        pts.push(point(layout.center, r_out, a0 + span * i as f32 / segments as f32));
-    }
-    for i in (0..=segments).rev() {
-        pts.push(point(layout.center, r_in, a0 + span * i as f32 / segments as f32));
-    }
-    pts
+    visible_pieces(layout, a0, a1, r_out)
+        .map(|(p0, p1)| {
+            let span = p1 - p0;
+            let segments = ((span * r_out) / SEGMENT_PX).ceil().max(1.0) as usize;
+            let mut pts = Vec::with_capacity(2 * (segments + 1));
+            for i in 0..=segments {
+                pts.push(point(layout.center, r_out, p0 + span * i as f32 / segments as f32));
+            }
+            for i in (0..=segments).rev() {
+                pts.push(point(layout.center, r_in, p0 + span * i as f32 / segments as f32));
+            }
+            pts
+        })
+        .collect()
 }
 
-/// Full circle outline at radius `r` (guide rings behind the chart).
-pub fn circle_points(center: Pos2, r: f32) -> Vec<Pos2> {
-    let segments = ((TAU * r) / (SEGMENT_PX * 2.0)).ceil().max(16.0) as usize;
-    (0..segments)
-        .map(|i| point(center, r, TAU * i as f32 / segments as f32))
+/// Visible parts of the guide circle at radius `r`, as open polylines.
+pub fn guide_arcs(layout: &Layout, r: f32) -> Vec<Vec<Pos2>> {
+    if !layout.view.radial(r, r) {
+        return Vec::new();
+    }
+    visible_pieces(layout, 0.0, TAU, r)
+        .map(|(p0, p1)| {
+            let span = p1 - p0;
+            let segments = ((span * r) / (SEGMENT_PX * 2.0)).ceil().max(8.0) as usize;
+            (0..=segments)
+                .map(|i| point(layout.center, r, p0 + span * i as f32 / segments as f32))
+                .collect()
+        })
         .collect()
 }
 
