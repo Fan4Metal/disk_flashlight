@@ -47,12 +47,14 @@ fn main() -> anyhow::Result<()> {
     let mut initial: Option<PathBuf> = None;
     let mut bench_path: Option<PathBuf> = None;
     let mut allow_mft = true;
+    let mut want_mft = false;
     while let Some(a) = args.next() {
         match a.as_str() {
             "--bench" => {
                 bench_path = Some(normalize(&args.next().unwrap_or_else(|| "C:".into())));
             }
             "--walk" => allow_mft = false,
+            "--mft" => want_mft = true,
             "--export-icon" => {
                 // Used by tools/make_release.py for the installer's icon.
                 let out = args.next().unwrap_or_else(|| "app.ico".into());
@@ -65,7 +67,9 @@ fn main() -> anyhow::Result<()> {
             }
             "-h" | "--help" => {
                 println!("Disk Flashlight {VERSION}");
-                println!("disk_flashlight [PATH] | --bench PATH [--walk] | --export-icon FILE | --version");
+                println!("disk_flashlight [--mft] [PATH] | --bench PATH [--walk] | --export-icon FILE | --version");
+                println!("  --mft   restart as administrator (UAC prompt) so that a whole NTFS drive");
+                println!("          is scanned through the MFT; ignored where it would not help");
                 return Ok(());
             }
             other => initial = Some(normalize(other)),
@@ -73,6 +77,9 @@ fn main() -> anyhow::Result<()> {
     }
     if let Some(p) = bench_path {
         return bench(p, allow_mft);
+    }
+    if want_mft && elevate_for_mft(initial.as_deref()) {
+        return Ok(()); // the elevated copy takes over
     }
 
     let options = eframe::NativeOptions {
@@ -101,6 +108,34 @@ fn main() -> anyhow::Result<()> {
         Box::new(move |cc| Ok(Box::new(app::App::new(cc, initial)))),
     )
     .map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+/// `--mft`: restart elevated when that enables the MFT scanner, i.e. when
+/// not elevated yet and the target is the root of an NTFS drive (or no
+/// target was given, so the drive is picked later). Returns `true` if the
+/// elevated copy was started; a declined UAC prompt continues without it.
+fn elevate_for_mft(target: Option<&std::path::Path>) -> bool {
+    if scan::win::is_elevated() {
+        return false;
+    }
+    let useful = match target {
+        None => true,
+        Some(p) => scan::mft::volume_letter(p).is_some_and(|letter| {
+            scan::win::list_drives().iter().any(|d| {
+                d.root.starts_with(letter) && d.fs.eq_ignore_ascii_case("NTFS")
+            })
+        }),
+    };
+    if !useful {
+        log::info!("--mft ignored: target is not the root of an NTFS drive");
+        return false;
+    }
+    let mut args = String::from("--mft");
+    if let Some(p) = target {
+        args.push(' ');
+        args.push_str(&app::quote_arg(&p.to_string_lossy()));
+    }
+    scan::win::relaunch_elevated(&args)
 }
 
 /// `C:` means "current directory on C" to Windows; a bare drive letter given

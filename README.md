@@ -60,9 +60,12 @@ disk_flashlight.exe D:\Projects  # scans the given path on start-up
 disk_flashlight.exe --bench C:\  # command-line benchmark of the scanner and layout
 disk_flashlight.exe --bench C:\ --walk  # the same benchmark with the MFT scanner disabled
 disk_flashlight.exe --version    # prints the version
+disk_flashlight.exe --mft C:\    # restarts as administrator (UAC prompt) and scans C: through the MFT
 ```
 
 Setting the environment variable `RUST_LOG=disk_flashlight=debug` prints per-phase timings of the MFT scanner.
+
+The `--mft` option requests administrator rights only where they speed up the scan: for the root of an NTFS drive, or when no path is given. For a subdirectory or another file system, and when the UAC prompt is declined, the program starts normally and walks the directories.
 
 The version is shown in the window title.
 

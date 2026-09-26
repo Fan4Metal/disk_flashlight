@@ -293,7 +293,7 @@ impl eframe::App for App {
 /// Quote a single command-line argument for `CommandLineToArgvW`, which
 /// treats backslashes before a closing quote as escapes: `"D:\My Dir\"`
 /// would swallow its closing quote, so trailing backslashes are doubled.
-fn quote_arg(s: &str) -> String {
+pub fn quote_arg(s: &str) -> String {
     if !s.contains([' ', '\t', '"']) {
         return s.to_string();
     }
