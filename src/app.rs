@@ -123,8 +123,9 @@ impl App {
                 if let Some(reason) = info.fallback_reason {
                     log::info!("MFT fallback: {reason}");
                 }
-                // Reflect the scanned volume in the drive picker.
-                if let Some(i) = self
+                // Reflect the scanned volume in the drive picker; a folder
+                // scan shows no drive there.
+                self.drive_idx = self
                     .drives
                     .iter()
                     .position(|d| d.root.eq_ignore_ascii_case(&model.root_path))
