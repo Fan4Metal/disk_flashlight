@@ -154,17 +154,20 @@ impl App {
                 egui::Label::new(egui::RichText::new(path).monospace()).truncate(),
             );
         } else {
-            ui.label("Select a drive to scan, or enter a path:");
-            let resp = ui.add(
-                egui::TextEdit::singleline(&mut self.custom_path)
-                    .desired_width(260.0)
-                    .hint_text(r"D:\Projects"),
-            );
-            let go = ui.button("Scan").clicked()
-                || (resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
-            if go && !self.custom_path.trim().is_empty() {
-                self.start_scan(PathBuf::from(self.custom_path.trim()));
-            }
+            // Scan on the right, the field takes whatever width is left.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let scan = ui.button("Scan");
+                let resp = ui.add(
+                    egui::TextEdit::singleline(&mut self.custom_path)
+                        .desired_width(ui.available_width())
+                        .hint_text(r"Path to scan, e.g. D:\Projects"),
+                );
+                let go = scan.clicked()
+                    || (resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
+                if go && !self.custom_path.trim().is_empty() {
+                    self.start_scan(PathBuf::from(self.custom_path.trim()));
+                }
+            });
         }
     }
 

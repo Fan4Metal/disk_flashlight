@@ -257,7 +257,7 @@ impl eframe::App for App {
                     if self.scan.is_some() {
                         ui.add(egui::Spinner::new().size(48.0));
                     } else {
-                        ui.heading("Select a drive to begin");
+                        ui.heading("Select a drive or enter a path to begin");
                     }
                 });
             });
