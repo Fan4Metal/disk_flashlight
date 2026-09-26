@@ -14,6 +14,7 @@ The project is written in Rust and uses [egui](https://github.com/emilk/egui) wi
 - Parallel directory walk for non-NTFS volumes, network paths and non-elevated runs (the same `C:` drive takes about 8 seconds on a cold cache and about 1.3 seconds on a warm one). When a drive or folder on an NTFS volume is scanned without administrator rights, the **Fast scan** toolbar button (marked with the UAC shield) restarts the application elevated and rescans it through the MFT.
 - Sunburst chart with up to seven rings, rendered as a single cached GPU mesh; sectors thinner than one pixel are dropped, so the chart stays responsive regardless of tree size.
 - Items too small to be told apart (under about four points of arc) are merged into one neutral **N smaller items** sector per directory; zooming in splits the group as items become wide enough, and a click on the group zooms in. Edges are smoothed with 4x multisampling.
+- When a whole drive (or network share) is scanned and its root is in the centre, the free space is shown as a pale grey-blue sector after the contents in the first ring, with its size and share of the capacity in the tooltip.
 - Tooltip with name, logical and allocated size, and directory and file counts for the sector under the cursor.
 - Click on a directory sector to make it the centre; a click on the centre goes up; back, forward and up navigation with history.
 - Context menu on right-click with **Open in Explorer** and **Properties** for the sector under the cursor, or for the current directory when the centre is right-clicked.

@@ -47,6 +47,8 @@ pub struct Palette {
     pub fade_max: f32,
     /// Saturation of "N smaller items" group sectors.
     pub sat_group: f32,
+    /// Free space of a drive: a pale cool grey, apart from the warm palette.
+    pub free: Color32,
 }
 
 impl Default for Palette {
@@ -62,6 +64,7 @@ impl Default for Palette {
             hue_smallest: 56.0,
             fade_max: 0.6,
             sat_group: 0.22,
+            free: Color32::from_rgb(218, 228, 238),
         }
     }
 }
@@ -181,7 +184,9 @@ pub fn build_mesh(model: &Model, layout: &Layout, palette: &Palette) -> Mesh {
     for (ring, sectors) in layout.rings.iter().enumerate() {
         let (r_in, r_out) = layout.radii[ring];
         for (i, s) in sectors.iter().enumerate() {
-            let color = if s.is_group() {
+            let color = if s.is_free() {
+                palette.free
+            } else if s.is_group() {
                 palette.group_color(ring, n_rings)
             } else {
                 palette.color(ring, i, n_rings, s.rel, model.node(s.node).is_dir)

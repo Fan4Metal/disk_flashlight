@@ -8,7 +8,8 @@ use egui::{Key, Modifiers};
 
 use crate::history::History;
 use crate::model::{Metric, Model, NO_NODE};
-use crate::scan::{self, Method, ScanHandle, win::Drive};
+use crate::scan::win::{DiskSpace, Drive};
+use crate::scan::{self, Method, ScanHandle};
 use crate::settings::Settings;
 use crate::ui::about::AboutDialog;
 use crate::ui::SideView;
@@ -33,6 +34,9 @@ pub struct App {
     pub status: String,
     /// Process has administrator rights (enables the MFT scanner).
     pub elevated: bool,
+    /// Capacity and free space when the scan covers a whole volume (or
+    /// network share), for the free-space sector.
+    pub disk: Option<DiskSpace>,
 }
 
 impl App {
@@ -63,6 +67,7 @@ impl App {
             about: AboutDialog::default(),
             status: "Ready".into(),
             elevated: scan::win::is_elevated(),
+            disk: None,
         };
         app.chart.palette.mode = settings.color_mode;
         app.tree.follow_hover = settings.follow_in_tree;
@@ -138,6 +143,12 @@ impl App {
                 self.tree.reset();
                 self.files.reset();
                 self.tree.reveal(&model, self.nav.root);
+                let root = std::path::Path::new(&model.root_path);
+                self.disk = if root.parent().is_none() {
+                    scan::win::disk_space(root)
+                } else {
+                    None
+                };
                 self.model = Some(Arc::new(model));
                 self.chart.invalidate();
                 self.scan = None;
@@ -326,7 +337,14 @@ impl eframe::App for App {
         egui::CentralPanel::no_frame().show(root_ui, |ui| {
                 chart_action = self
                 .chart
-                .show(ui, &model, self.nav.root, self.metric, self.tree_hovered);
+                .show(
+                    ui,
+                    &model,
+                    self.nav.root,
+                    self.metric,
+                    self.tree_hovered,
+                    self.disk.filter(|_| self.nav.root == 0),
+                );
         });
         match chart_action {
             ChartAction::None => {}

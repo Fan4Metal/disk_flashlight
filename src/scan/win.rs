@@ -55,7 +55,7 @@ fn wide_path(p: &Path) -> Vec<u16> {
 /// Enumerate logical drives with label, type and capacity.
 pub fn list_drives() -> Vec<Drive> {
     use windows_sys::Win32::Storage::FileSystem::{
-        GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW,
+        GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW,
     };
     // Values of DRIVE_* from winbase.h.
     const DRIVE_REMOVABLE: u32 = 2;
@@ -103,22 +103,32 @@ pub fn list_drives() -> Vec<Drive> {
         };
         let label = from_buf(&label_buf);
         let fs = from_buf(&fs_buf);
-        let mut free = 0u64;
-        let mut total = 0u64;
-        let mut total_free = 0u64;
-        unsafe {
-            GetDiskFreeSpaceExW(wroot.as_ptr(), &mut free, &mut total, &mut total_free);
-        }
+        let space = disk_space(Path::new(&root)).unwrap_or_default();
         out.push(Drive {
             root,
             label,
             fs,
             kind,
-            total,
-            free: total_free,
+            total: space.total,
+            free: space.free,
         });
     }
     out
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DiskSpace {
+    pub total: u64,
+    pub free: u64,
+}
+
+/// Capacity and free bytes of the volume (or network share) holding `path`.
+pub fn disk_space(path: &Path) -> Option<DiskSpace> {
+    use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+    let wpath = wide_path(path);
+    let (mut available, mut total, mut free) = (0u64, 0u64, 0u64);
+    let ok = unsafe { GetDiskFreeSpaceExW(wpath.as_ptr(), &mut available, &mut total, &mut free) };
+    (ok != 0).then_some(DiskSpace { total, free })
 }
 
 /// Bytes per cluster for the volume containing `path` (4096 on failure).

@@ -9,6 +9,7 @@ use crate::format::{human_size, thousands};
 use crate::layout::{self, Layout, LayoutParams, Sector};
 use crate::model::{Metric, Model};
 use crate::render::{self, Palette};
+use crate::scan::win::DiskSpace;
 
 /// Approximate extent of the standard Windows arrow cursor below and to the
 /// right of its hot spot, in points (it scales with DPI like the UI does).
@@ -35,6 +36,7 @@ struct CacheKey {
     center: (i32, i32),
     radius: i32,
     view: (i32, i32, i32, i32),
+    free: u64,
 }
 
 pub struct ChartView {
@@ -109,6 +111,7 @@ impl ChartView {
         root: u32,
         metric: Metric,
         external_highlight: Option<u32>,
+        disk: Option<DiskSpace>,
     ) -> ChartAction {
         let size = ui.available_size();
         let (response, painter) = ui.allocate_painter(size, Sense::click_and_drag());
@@ -151,9 +154,19 @@ impl ChartView {
                 rect.max.x as i32,
                 rect.max.y as i32,
             ),
+            free: disk.map_or(0, |d| d.free),
         };
         if self.key != Some(key) || self.layout.is_none() {
-            let l = layout::build(model, root, metric, center, radius, rect, &self.params);
+            let l = layout::build_with_free(
+                model,
+                root,
+                metric,
+                center,
+                radius,
+                rect,
+                &self.params,
+                key.free,
+            );
             let m = render::build_mesh(model, &l, &self.palette);
             self.layout = Some(l);
             self.mesh = Some(Arc::new(m));
@@ -210,7 +223,7 @@ impl ChartView {
         let hit_sector: Option<Sector> = hit.map(|(ring, i)| layout.rings[ring][i]);
         self.hovered = match self.menu_node {
             Some(n) => Some(n),
-            None => hit_sector.filter(|s| !s.is_group()).map(|s| s.node),
+            None => hit_sector.filter(|s| s.is_item()).map(|s| s.node),
         };
 
         if let Some((ring, i)) = hit {
@@ -248,7 +261,7 @@ impl ChartView {
                     layout
                         .hit_test(p)
                         .map(|(ring, i)| layout.rings[ring][i])
-                        .filter(|s| !s.is_group())
+                        .filter(|s| s.is_item())
                         .map(|s| s.node)
                 }
             });
@@ -262,7 +275,7 @@ impl ChartView {
                 let s = layout.rings[ring][i];
                 if s.is_group() {
                     zoom_to = Some(p);
-                } else if model.node(s.node).is_dir {
+                } else if s.is_item() && model.node(s.node).is_dir {
                     action = ChartAction::Navigate(s.node);
                 }
             }
@@ -300,7 +313,12 @@ impl ChartView {
             )
             .show(|ui| {
                 ui.set_max_width(360.0);
-                if s.is_group() {
+                if s.is_free() {
+                    ui.strong("Free space");
+                    let total = disk.map_or(0, |d| d.total);
+                    let share = s.group_size as f64 / total.max(1) as f64 * 100.0;
+                    ui.label(format!("{} ({share:.0}% of {})", human_size(s.group_size), human_size(total)));
+                } else if s.is_group() {
                     ui.strong(format!("{} smaller items", thousands(s.count as u64)));
                     ui.label(human_size(s.group_size));
                     ui.weak(format!("in {}", model.path(s.node)));

@@ -13,7 +13,7 @@ use std::f32::consts::{PI, TAU};
 
 use egui::{Pos2, Rect};
 
-use crate::model::{Metric, Model};
+use crate::model::{Metric, Model, NO_NODE};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Sector {
@@ -28,7 +28,8 @@ pub struct Sector {
     pub rel: f32,
     /// 0 for a single item; otherwise the number of merged small items.
     pub count: u32,
-    /// Total size (in the layout metric) of the merged items of a group.
+    /// Total size (in the layout metric) of the merged items of a group, or
+    /// the free bytes of the free-space sector.
     pub group_size: u64,
 }
 
@@ -36,6 +37,18 @@ impl Sector {
     #[inline]
     pub fn is_group(&self) -> bool {
         self.count > 0
+    }
+
+    /// Free space of the drive, next to the root's children in ring 0.
+    #[inline]
+    pub fn is_free(&self) -> bool {
+        self.node == NO_NODE
+    }
+
+    /// A single file or directory (not a group, not free space).
+    #[inline]
+    pub fn is_item(&self) -> bool {
+        !self.is_group() && !self.is_free()
     }
 }
 
@@ -217,6 +230,23 @@ pub fn build(
     view: Rect,
     params: &LayoutParams,
 ) -> Layout {
+    build_with_free(model, root, metric, center, outer_radius, view, params, 0)
+}
+
+/// Like [`build`], with `free` bytes of free space shown as one more sector
+/// after the root's children in ring 0 (the children then share the rest of
+/// the turn).
+#[allow(clippy::too_many_arguments)]
+pub fn build_with_free(
+    model: &Model,
+    root: u32,
+    metric: Metric,
+    center: Pos2,
+    outer_radius: f32,
+    view: Rect,
+    params: &LayoutParams,
+    free: u64,
+) -> Layout {
     let depth = params.max_depth.max(1);
     let r0 = outer_radius * params.center_frac;
     let s = params.ring_shrink;
@@ -246,12 +276,32 @@ pub fn build(
     };
 
     let total = model.node(root).metric(metric);
+    let used_end = if free == 0 {
+        TAU
+    } else {
+        TAU * (total as f64 / (total as f64 + free as f64)) as f32
+    };
     if total > 0 {
-        place(model, &mut layout, params, root, 0.0, TAU, 0);
+        place(model, &mut layout, params, root, 0.0, used_end, 0);
+    }
+    let (r_in, r_out) = layout.radii[0];
+    if free > 0
+        && TAU - used_end >= params.min_arc_px / r_out
+        && layout.view.radial(r_in, r_out)
+        && layout.view.angular(used_end, TAU)
+    {
+        layout.rings[0].push(Sector {
+            node: NO_NODE,
+            a0: used_end,
+            a1: TAU,
+            rel: 0.0,
+            count: 0,
+            group_size: free,
+        });
     }
     for (ring, sectors) in layout.rings.iter().enumerate() {
         for (i, s) in sectors.iter().enumerate() {
-            if !s.is_group() {
+            if s.is_item() {
                 layout.index.insert(s.node, (ring, i));
             }
         }
@@ -453,6 +503,30 @@ mod tests {
         let big = build(&m, 0, Metric::Logical, Pos2::ZERO, 60_000.0, everything(), &p);
         assert_eq!(big.rings[0].len(), 201);
         assert!(big.rings[0].iter().all(|s| !s.is_group()));
+    }
+
+    /// Free space takes its share of ring 0 after the children and is
+    /// neither indexed nor treated as an item.
+    #[test]
+    fn free_space_follows_the_children() {
+        let m = model(vec![f("a", 60), f("b", 20)]);
+        let p = LayoutParams::default();
+        let l = build_with_free(&m, 0, Metric::Logical, Pos2::ZERO, 100.0, everything(), &p, 120);
+        let ring = &l.rings[0];
+        assert_eq!(ring.len(), 3);
+        // 80 used of 200: the children fill 40% of the turn.
+        assert!((ring[1].a1 - TAU * 0.4).abs() < 1e-4);
+        let free = ring[2];
+        assert!(free.is_free() && !free.is_item() && !free.is_group());
+        assert_eq!((free.a0, free.a1, free.group_size), (ring[1].a1, TAU, 120));
+        assert_eq!(l.index.len(), 2, "only the two files are indexed");
+        let r = l.radii[0].0 + 1.0;
+        let (ring_i, i) = l.hit_test(Pos2::new(-r, 0.0)).unwrap(); // 270 degrees
+        assert!(l.rings[ring_i][i].is_free());
+        // No free space: the children take the whole turn, as before.
+        let l = build(&m, 0, Metric::Logical, Pos2::ZERO, 100.0, everything(), &p);
+        assert_eq!(l.rings[0].len(), 2);
+        assert!((l.rings[0][1].a1 - TAU).abs() < 1e-4);
     }
 
     /// A single thin leftover is drawn as itself, not as a group of one.
