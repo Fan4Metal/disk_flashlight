@@ -119,16 +119,34 @@ impl App {
         }
     }
 
+    /// Path being scanned or last scanned: a running scan wins over the
+    /// loaded result, which wins over the drive picker.
+    fn scan_target(&self) -> Option<String> {
+        self.scan
+            .as_ref()
+            .map(|h| h.path.display().to_string())
+            .or_else(|| self.model.as_ref().map(|m| m.root_path.clone()))
+            .or_else(|| self.drives.get(self.drive_idx).map(|d| d.root.clone()))
+    }
+
+    /// Whether restarting elevated would switch to the MFT scanner: only
+    /// when the target is the root of an NTFS drive.
+    pub fn fast_scan_available(&self) -> bool {
+        let Some(target) = self.scan_target() else {
+            return false;
+        };
+        let Some(letter) = scan::mft::volume_letter(std::path::Path::new(&target)) else {
+            return false;
+        };
+        self.drives.iter().any(|d| {
+            d.root.starts_with(letter) && d.fs.eq_ignore_ascii_case("NTFS")
+        })
+    }
+
     /// Restart elevated (UAC prompt) so the MFT scanner can be used, keeping
     /// the current scan target. Closes this window on success.
     pub fn relaunch_as_admin(&mut self, ctx: &egui::Context) {
-        let target = self
-            .model
-            .as_ref()
-            .map(|m| m.root_path.clone())
-            .or_else(|| self.scan.as_ref().map(|h| h.path.display().to_string()))
-            .or_else(|| self.drives.get(self.drive_idx).map(|d| d.root.clone()))
-            .unwrap_or_default();
+        let target = self.scan_target().unwrap_or_default();
         if scan::win::relaunch_elevated(&quote_arg(&target)) {
             if let Some(h) = &self.scan {
                 h.cancel();

@@ -11,7 +11,7 @@ The project is written in Rust and uses [egui](https://github.com/emilk/egui) wi
 ## Features
 
 - Scanning of whole NTFS drives by reading the Master File Table directly when the application runs with administrator rights (the `C:` drive with roughly 920 000 entries is scanned in under one second). The MFT scan counts hard links once and includes system areas such as `System Volume Information` and the NTFS metafiles.
-- Parallel directory walk for subdirectories, non-NTFS volumes and non-elevated runs (the same `C:` drive takes about 8 seconds on a cold cache and under 3 seconds on a warm one). The **Admin** toolbar button restarts the application elevated.
+- Parallel directory walk for subdirectories, non-NTFS volumes and non-elevated runs (the same `C:` drive takes about 8 seconds on a cold cache and under 3 seconds on a warm one). When a whole NTFS drive is scanned without administrator rights, the **Fast scan** toolbar button (marked with the UAC shield) restarts the application elevated and rescans the drive through the MFT.
 - Sunburst chart with up to seven rings, rendered as a single cached GPU mesh; sectors thinner than one pixel are dropped, so the chart stays responsive regardless of tree size.
 - Tooltip with name, logical and allocated size, and directory and file counts for the sector under the cursor.
 - Click on a directory sector to make it the centre; a click on the centre goes up; back, forward and up navigation with history.

@@ -17,6 +17,8 @@ pub struct Drive {
     /// `C:\`
     pub root: String,
     pub label: String,
+    /// File system name, e.g. `NTFS`, `FAT32`, `exFAT`.
+    pub fs: String,
     pub kind: DriveKind,
     pub total: u64,
     pub free: u64,
@@ -77,6 +79,7 @@ pub fn list_drives() -> Vec<Drive> {
             _ => DriveKind::Unknown,
         };
         let mut label_buf = [0u16; 261];
+        let mut fs_buf = [0u16; 261];
         let ok = unsafe {
             GetVolumeInformationW(
                 wroot.as_ptr(),
@@ -85,17 +88,20 @@ pub fn list_drives() -> Vec<Drive> {
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                0,
+                fs_buf.as_mut_ptr(),
+                fs_buf.len() as u32,
             )
         };
-        let label = if ok != 0 {
-            let len = label_buf.iter().position(|&c| c == 0).unwrap_or(0);
-            String::from_utf16_lossy(&label_buf[..len])
-        } else {
+        if ok == 0 {
             // Not ready (empty CD drive etc.) — skip entirely.
             continue;
+        }
+        let from_buf = |b: &[u16]| {
+            let len = b.iter().position(|&c| c == 0).unwrap_or(b.len());
+            String::from_utf16_lossy(&b[..len])
         };
+        let label = from_buf(&label_buf);
+        let fs = from_buf(&fs_buf);
         let mut free = 0u64;
         let mut total = 0u64;
         let mut total_free = 0u64;
@@ -105,6 +111,7 @@ pub fn list_drives() -> Vec<Drive> {
         out.push(Drive {
             root,
             label,
+            fs,
             kind,
             total,
             free: total_free,

@@ -50,16 +50,27 @@ impl App {
                 self.rescan();
             }
 
-            if !self.elevated
-                && ui
-                    .button("Admin")
+            if !self.elevated && self.fast_scan_available() {
+                let icon = ui.id().with("uac_shield");
+                let resp = egui::Button::new((
+                    egui::Atom::custom(icon, egui::vec2(11.0, 13.0)),
+                    "Fast scan",
+                ))
+                .atom_ui(ui);
+                if let Some(rect) = resp.rect(icon) {
+                    paint_uac_shield(ui.painter(), rect);
+                }
+                if resp
+                    .response
+                    .clone()
                     .on_hover_text(
-                        "Restart as administrator to scan whole NTFS drives \
-                         through the MFT (much faster)",
+                        "Restarts as administrator and scans the whole drive \
+                         by reading the NTFS MFT directly",
                     )
                     .clicked()
-            {
-                self.relaunch_as_admin(ui.ctx());
+                {
+                    self.relaunch_as_admin(ui.ctx());
+                }
             }
 
             ui.separator();
@@ -168,4 +179,36 @@ impl App {
             });
         });
     }
+}
+
+/// The Windows UAC shield (blue and yellow quarters), drawn into `rect` to
+/// mark an action that asks for administrator rights.
+fn paint_uac_shield(painter: &egui::Painter, rect: egui::Rect) {
+    use egui::{Color32, Shape, Stroke, pos2};
+    let (l, r, t, b) = (rect.left(), rect.right(), rect.top(), rect.bottom());
+    let c = rect.center();
+    // Convex pentagon: flat top, straight sides, pointed bottom.
+    let shield = vec![
+        pos2(l, t),
+        pos2(r, t),
+        pos2(r, t + rect.height() * 0.55),
+        pos2(c.x, b),
+        pos2(l, t + rect.height() * 0.55),
+    ];
+    let blue = Color32::from_rgb(38, 98, 196);
+    let yellow = Color32::from_rgb(246, 196, 44);
+    painter.add(Shape::convex_polygon(shield.clone(), blue, Stroke::NONE));
+    // Yellow top-right and bottom-left quarters, clipped from the same shape.
+    for quarter in [
+        egui::Rect::from_min_max(pos2(c.x, t), pos2(r, c.y)),
+        egui::Rect::from_min_max(pos2(l, c.y), pos2(c.x, b)),
+    ] {
+        painter
+            .with_clip_rect(quarter)
+            .add(Shape::convex_polygon(shield.clone(), yellow, Stroke::NONE));
+    }
+    painter.add(Shape::closed_line(
+        shield,
+        Stroke::new(1.0, Color32::from_rgb(20, 50, 110)),
+    ));
 }
