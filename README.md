@@ -85,10 +85,6 @@ Keyboard shortcuts: `Backspace` goes up, `Alt+Left` and `Alt+Right` move through
 | `src/history.rs` | Back/forward navigation history |
 | `tools/` | Installer script (`setup.iss`) and release script (`make_release.py`) |
 
-## Roadmap
-
-Planned: saving and loading scan results, and a context menu for opening items in Explorer.
-
 ## License
 
 MIT, see [LICENSE](LICENSE).
