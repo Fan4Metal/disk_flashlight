@@ -1,6 +1,6 @@
 """
 Сборка выпуска: cargo build --release + установщик Inno Setup (dist\\Disk_Flashlight_<версия>_Setup.exe)
-и портативная копия программы (dist\\Disk_Flashlight_<версия>_portable.exe).
+и портативный архив (dist\\Disk_Flashlight_<версия>_portable.zip).
 
 Запускается из любой папки: python tools/make_release.py [--no-tests]
 Внешних зависимостей нет. Вывод cargo и ISCC показывается как есть, чтобы был виден ход сборки.
@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import time
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -24,6 +25,8 @@ ICON = ROOT / "target" / "app.ico"
 
 # Файлы, которые установщик берёт из репозитория (см. [Files] в setup.iss).
 BUNDLED_FILES = ["LICENSE", "README.md", "README.ru.md"]
+# Папка внутри портативного архива: при распаковке «сюда» файлы не рассыпаются.
+PORTABLE_DIR = "Disk Flashlight"
 
 ISCC_PATHS = [
     Path(R"C:\Program Files (x86)\Inno Setup 6\ISCC.exe"),
@@ -143,6 +146,19 @@ def check_prerequisites() -> tuple[str, Path]:
     return cargo, iscc
 
 
+def make_portable_zip(version: str) -> Path:
+    """Архив с программой и документацией в папке PORTABLE_DIR (как в установленной версии)."""
+    archive = DIST_DIR / f"Disk_Flashlight_{version}_portable.zip"
+    # Портативный exe прежних сборок больше не выпускается: убираем, чтобы не попал в релиз.
+    stale = DIST_DIR / f"Disk_Flashlight_{version}_portable.exe"
+    stale.unlink(missing_ok=True)
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+        z.write(EXE, f"{PORTABLE_DIR}/{EXE.name}")
+        for name in BUNDLED_FILES:
+            z.write(ROOT / name, f"{PORTABLE_DIR}/{name}")
+    return archive
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Сборка выпуска Disk Flashlight")
     parser.add_argument("--no-tests", action="store_true", help="не запускать cargo test")
@@ -187,8 +203,7 @@ def main() -> int:
         if not installer.is_file():
             raise ReleaseError(f"ISCC завершился, но установщик не найден: {installer}")
         # Имена без пробелов: GitHub заменяет пробелы в именах файлов релиза на точки.
-        portable = DIST_DIR / f"Disk_Flashlight_{version}_portable.exe"
-        shutil.copy2(EXE, portable)
+        portable = make_portable_zip(version)
         print(f"Портативная версия: {portable.relative_to(ROOT)}")
         steps.finish()
 

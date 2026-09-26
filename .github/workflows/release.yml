@@ -1,4 +1,4 @@
-# Builds the installer and the portable exe with tools/make_release.py.
+# Builds the installer and the portable zip with tools/make_release.py.
 #
 # - Pushing a tag "vX.Y.Z" publishes a GitHub release with both files. The
 #   tag must match the version in Cargo.toml.
@@ -53,7 +53,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: disk_flashlight-${{ steps.version.outputs.version }}
-          path: dist/*.exe
+          path: |
+            dist/*_Setup.exe
+            dist/*_portable.zip
           if-no-files-found: error
 
       - name: Publish GitHub release
@@ -61,6 +63,8 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           name: Disk Flashlight ${{ steps.version.outputs.version }}
-          files: dist/*.exe
+          files: |
+            dist/*_Setup.exe
+            dist/*_portable.zip
           fail_on_unmatched_files: true
           generate_release_notes: true

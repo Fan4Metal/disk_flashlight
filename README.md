@@ -41,9 +41,9 @@ python tools/make_release.py              # tests, release build, installer
 python tools/make_release.py --no-tests   # the same without cargo test
 ```
 
-The installer is written to `dist\Disk_Flashlight_<version>_Setup.exe`, together with a portable copy of the program, `dist\Disk_Flashlight_<version>_portable.exe`; the version is taken from `Cargo.toml`. Installation does not require administrator rights: the program is placed in `%LOCALAPPDATA%\Programs\Disk Flashlight`. An optional task adds the **Analyze with Disk Flashlight** item to the Explorer context menu of folders and drives; the entry is removed on uninstallation.
+The installer is written to `dist\Disk_Flashlight_<version>_Setup.exe`, together with a portable archive, `dist\Disk_Flashlight_<version>_portable.zip`, which contains the program, the licence and both READMEs in a `Disk Flashlight` folder and runs without installation; the version is taken from `Cargo.toml`. Installation does not require administrator rights: the program is placed in `%LOCALAPPDATA%\Programs\Disk Flashlight`. An optional task adds the **Analyze with Disk Flashlight** item to the Explorer context menu of folders and drives; the entry is removed on uninstallation.
 
-Releases on GitHub are built by the **Release** workflow (`.github/workflows/release.yml`). After the version in `Cargo.toml` is updated and committed, pushing a matching tag publishes a release with the installer and the portable executable:
+Releases on GitHub are built by the **Release** workflow (`.github/workflows/release.yml`). After the version in `Cargo.toml` is updated and committed, pushing a matching tag publishes a release with the installer and the portable archive:
 
 ```
 git tag v0.1.0
