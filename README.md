@@ -21,6 +21,7 @@ The project is written in Rust and uses [egui](https://github.com/emilk/egui) wi
 - Two colour schemes selectable in the toolbar: **by size**, where the largest item among its siblings is red and smaller ones shift towards yellow, with colours becoming paler towards the rim (as in OverDisk), and **by level**, where the colour depends on the ring.
 - Physical (cluster-rounded, compressed and sparse files taken into account) or logical size as the chart metric.
 - Status bar with directory and file counts, logical size, allocated size and slack for the current root.
+- Settings are kept between runs: the chart metric, the colour scheme, the **Follow in tree** option, the window size and position, the tree width, and the last scanned path, which is offered in the path field (and selected in the drive list if it is a drive) without being scanned. They are stored in `%APPDATA%\Disk Flashlight\data\app.ron`.
 
 ## Building
 
@@ -83,6 +84,7 @@ Keyboard shortcuts: `Backspace` goes up, `Alt+Left` and `Alt+Right` move through
 | `src/render.rs` | Tessellation of sectors into an `egui::Mesh`, palette |
 | `src/ui/` | Chart widget, directory tree, toolbar and status bar |
 | `src/history.rs` | Back/forward navigation history |
+| `src/settings.rs` | Settings kept between runs |
 | `tools/` | Installer script (`setup.iss`) and release script (`make_release.py`) |
 
 ## License

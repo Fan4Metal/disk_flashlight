@@ -9,6 +9,7 @@ use egui::{Key, Modifiers};
 use crate::history::History;
 use crate::model::{Metric, Model, NO_NODE};
 use crate::scan::{self, Method, ScanHandle, win::Drive};
+use crate::settings::Settings;
 use crate::ui::about::AboutDialog;
 use crate::ui::chart::{ChartAction, ChartView};
 use crate::ui::tree::TreeView;
@@ -33,15 +34,23 @@ pub struct App {
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, initial: Option<PathBuf>) -> Self {
         cc.egui_ctx.set_visuals(egui::Visuals::light());
+        let settings = cc.storage.map(Settings::load).unwrap_or_default();
         let drives = scan::win::list_drives();
+        // The last scanned path is offered, not scanned: in the path field,
+        // and in the drive picker (so Rescan scans it) if it is a drive.
+        let last_path = settings.last_path.unwrap_or_default();
+        let drive_idx = drives
+            .iter()
+            .position(|d| d.root.eq_ignore_ascii_case(&last_path))
+            .unwrap_or(usize::MAX);
         let mut app = Self {
             model: None,
             scan: None,
             drives,
-            drive_idx: usize::MAX,
-            custom_path: String::new(),
+            drive_idx,
+            custom_path: last_path,
             nav: History::default(),
-            metric: Metric::Physical,
+            metric: settings.metric,
             chart: ChartView::default(),
             tree: TreeView::default(),
             tree_hovered: None,
@@ -49,6 +58,8 @@ impl App {
             status: "Ready".into(),
             elevated: scan::win::is_elevated(),
         };
+        app.chart.palette.mode = settings.color_mode;
+        app.tree.follow_hover = settings.follow_in_tree;
         if let Some(p) = initial {
             app.start_scan(p);
         }
@@ -234,6 +245,20 @@ impl App {
 }
 
 impl eframe::App for App {
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        let last_path = match &self.model {
+            Some(m) => Some(m.root_path.clone()),
+            None => Some(self.custom_path.trim().to_string()),
+        };
+        Settings {
+            metric: self.metric,
+            color_mode: self.chart.palette.mode,
+            follow_in_tree: self.tree.follow_hover,
+            last_path,
+        }
+        .save(storage);
+    }
+
     fn ui(&mut self, root_ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = root_ui.ctx().clone();
         self.poll_scan(&ctx);

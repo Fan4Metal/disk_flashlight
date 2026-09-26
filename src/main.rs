@@ -8,6 +8,7 @@ mod layout;
 mod model;
 mod render;
 mod scan;
+mod settings;
 mod ui;
 
 use std::path::PathBuf;
@@ -18,6 +19,8 @@ use format::{human_size, thousands};
 /// Version from Cargo.toml, shared by the window title, `--version`, the
 /// installer and the GitHub release tag.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// eframe app id; also names the settings folder in `%APPDATA%`.
+const APP_ID: &str = "Disk Flashlight";
 
 /// The release build is a GUI-subsystem program with no console of its own,
 /// so text printed by the command-line modes would be lost when started from
@@ -92,7 +95,8 @@ fn main() -> anyhow::Result<()> {
                 width: 64,
                 height: 64,
             }),
-        centered: true,
+        // Centre only on the first run; later runs restore the saved window.
+        centered: !eframe::storage_dir(APP_ID).is_some_and(|d| d.join("app.ron").exists()),
         // 4x MSAA: the chart is one big triangle mesh without egui's edge
         // feathering, so thin sectors and arcs would otherwise be jagged.
         // DF_MSAA=1 turns it off (for comparison or a GPU without MSAA).
@@ -103,7 +107,7 @@ fn main() -> anyhow::Result<()> {
         ..Default::default()
     };
     eframe::run_native(
-        "Disk Flashlight",
+        APP_ID,
         options,
         Box::new(move |cc| Ok(Box::new(app::App::new(cc, initial)))),
     )
