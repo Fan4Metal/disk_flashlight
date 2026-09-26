@@ -133,26 +133,39 @@ impl App {
 
             ui.separator();
 
-            // Current path (read-only) or a free-form path to scan.
-            if let Some(m) = &self.model {
-                let path = m.path(self.nav.root);
-                ui.add(
-                    egui::Label::new(egui::RichText::new(path).monospace()).truncate(),
-                );
-            } else {
-                ui.label("Select a drive to scan, or enter a path:");
-                let resp = ui.add(
-                    egui::TextEdit::singleline(&mut self.custom_path)
-                        .desired_width(260.0)
-                        .hint_text(r"D:\Projects"),
-                );
-                let go = ui.button("Scan").clicked()
-                    || (resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
-                if go && !self.custom_path.trim().is_empty() {
-                    self.start_scan(PathBuf::from(self.custom_path.trim()));
+            // About at the right end; the path takes the space left over.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("About").on_hover_text("About Disk Flashlight (F1)").clicked() {
+                    self.about.open = true;
                 }
-            }
+                ui.separator();
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    self.path_field(ui);
+                });
+            });
         });
+    }
+
+    /// Current path (read-only) or a free-form path to scan.
+    fn path_field(&mut self, ui: &mut Ui) {
+        if let Some(m) = &self.model {
+            let path = m.path(self.nav.root);
+            ui.add(
+                egui::Label::new(egui::RichText::new(path).monospace()).truncate(),
+            );
+        } else {
+            ui.label("Select a drive to scan, or enter a path:");
+            let resp = ui.add(
+                egui::TextEdit::singleline(&mut self.custom_path)
+                    .desired_width(260.0)
+                    .hint_text(r"D:\Projects"),
+            );
+            let go = ui.button("Scan").clicked()
+                || (resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
+            if go && !self.custom_path.trim().is_empty() {
+                self.start_scan(PathBuf::from(self.custom_path.trim()));
+            }
+        }
     }
 
     pub fn status_bar(&mut self, ui: &mut Ui) {

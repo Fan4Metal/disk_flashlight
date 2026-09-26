@@ -9,6 +9,7 @@ use egui::{Key, Modifiers};
 use crate::history::History;
 use crate::model::{Metric, Model, NO_NODE};
 use crate::scan::{self, Method, ScanHandle, win::Drive};
+use crate::ui::about::AboutDialog;
 use crate::ui::chart::{ChartAction, ChartView};
 use crate::ui::tree::TreeView;
 
@@ -23,6 +24,7 @@ pub struct App {
     pub chart: ChartView,
     pub tree: TreeView,
     pub tree_hovered: Option<u32>,
+    pub about: AboutDialog,
     pub status: String,
     /// Process has administrator rights (enables the MFT scanner).
     pub elevated: bool,
@@ -43,6 +45,7 @@ impl App {
             chart: ChartView::default(),
             tree: TreeView::default(),
             tree_hovered: None,
+            about: AboutDialog::default(),
             status: "Ready".into(),
             elevated: scan::win::is_elevated(),
         };
@@ -203,14 +206,18 @@ impl App {
         if ctx.memory(|m| m.focused().is_some()) {
             return;
         }
-        let (back, fwd, up, rescan) = ctx.input(|i| {
+        let (back, fwd, up, rescan, about) = ctx.input(|i| {
             (
                 i.modifiers.matches_exact(Modifiers::ALT) && i.key_pressed(Key::ArrowLeft),
                 i.modifiers.matches_exact(Modifiers::ALT) && i.key_pressed(Key::ArrowRight),
                 i.key_pressed(Key::Backspace),
                 i.key_pressed(Key::F5),
+                i.key_pressed(Key::F1),
             )
         });
+        if about {
+            self.about.open = true;
+        }
         if back {
             self.go_back();
         }
@@ -230,7 +237,10 @@ impl eframe::App for App {
     fn ui(&mut self, root_ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = root_ui.ctx().clone();
         self.poll_scan(&ctx);
-        self.handle_keys(&ctx);
+        if !self.about.open {
+            self.handle_keys(&ctx);
+        }
+        self.about.show(&ctx);
 
         egui::Panel::top("toolbar").show(root_ui, |ui| {
             ui.add_space(2.0);
