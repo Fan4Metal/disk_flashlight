@@ -128,6 +128,9 @@ impl App {
                 self.chart.invalidate();
             }
 
+            ui.checkbox(&mut self.tree.follow_hover, "Follow in tree")
+                .on_hover_text("Expand the directory tree to the item under the mouse in the chart");
+
             ui.separator();
 
             // Current path (read-only) or a free-form path to scan.
