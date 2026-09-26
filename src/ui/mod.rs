@@ -1,6 +1,7 @@
 pub mod about;
 pub mod chart;
 pub mod files;
+pub mod search;
 pub mod toolbar;
 pub mod tree;
 
@@ -10,4 +11,5 @@ pub enum SideView {
     #[default]
     Folders,
     LargestFiles,
+    Search,
 }

@@ -59,6 +59,7 @@ impl Settings {
             side_view: match get(SIDE_VIEW).as_deref() {
                 Some("folders") => SideView::Folders,
                 Some("largest_files") => SideView::LargestFiles,
+                Some("search") => SideView::Search,
                 _ => d.side_view,
             },
             last_path: get(LAST_PATH).filter(|p| !p.is_empty()),
@@ -79,6 +80,7 @@ impl Settings {
         let side_view = match self.side_view {
             SideView::Folders => "folders",
             SideView::LargestFiles => "largest_files",
+            SideView::Search => "search",
         };
         storage.set_string(FOLLOW_IN_TREE, self.follow_in_tree.to_string());
         storage.set_string(SIDE_VIEW, side_view.into());

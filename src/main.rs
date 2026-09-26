@@ -250,6 +250,17 @@ fn bench(path: PathBuf, allow_mft: bool) -> anyhow::Result<()> {
         t.elapsed().as_secs_f64() * 1e3,
         top.len()
     );
+
+    // Name search over the whole scan, run on every keystroke in the UI.
+    for query in ["d", "dll", "setup", "а"] {
+        let t = Instant::now();
+        let (count, _) = model.search(0, query, model::Metric::Physical, 200);
+        println!(
+            "search {query:>5}: {:.2}ms  ({} matches)",
+            t.elapsed().as_secs_f64() * 1e3,
+            thousands(count as u64)
+        );
+    }
     Ok(())
 }
 

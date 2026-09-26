@@ -278,34 +278,101 @@ impl Model {
     /// entered: nothing inside them can make the list. Among files of equal
     /// size the choice is deterministic but otherwise unspecified.
     pub fn largest_files(&self, root: u32, metric: Metric, limit: usize) -> Vec<u32> {
-        use std::cmp::Reverse;
-        use std::collections::BinaryHeap;
-        if limit == 0 {
-            return Vec::new();
-        }
-        // Min-heap of the best files so far.
-        let mut best: BinaryHeap<Reverse<(u64, Reverse<u32>)>> = BinaryHeap::with_capacity(limit + 1);
+        let mut best = TopN::new(limit);
         let mut stack = vec![root];
         while let Some(dir) = stack.pop() {
             for c in self.children(dir) {
                 let n = self.node(c);
                 let m = n.metric(metric);
-                if best.len() == limit && best.peek().is_some_and(|Reverse((min, _))| m <= *min) {
+                if !best.could_take(m) {
                     continue;
                 }
                 if n.is_dir {
                     stack.push(c);
                 } else {
-                    best.push(Reverse((m, Reverse(c))));
-                    if best.len() > limit {
-                        best.pop();
-                    }
+                    best.push(m, c);
                 }
             }
         }
-        best.into_sorted_vec()
+        best.into_ids()
+    }
+
+    /// Files and directories under `root` whose name contains `query`,
+    /// ignoring case: how many there are, and the `limit` largest of them by
+    /// `metric`, largest first.
+    pub fn search(&self, root: u32, query: &str, metric: Metric, limit: usize) -> (usize, Vec<u32>) {
+        let needle = query.to_lowercase();
+        if needle.is_empty() {
+            return (0, Vec::new());
+        }
+        // An ASCII query compares bytes without lowercasing the names; other
+        // bytes of UTF-8 never equal ASCII ones, so any name works with it.
+        let ascii = needle.is_ascii();
+        let mut lowered = String::new();
+        let mut matches = |name: &str| {
+            if ascii {
+                let (h, n) = (name.as_bytes(), needle.as_bytes());
+                n.len() <= h.len() && h.windows(n.len()).any(|w| w.eq_ignore_ascii_case(n))
+            } else if name.is_ascii() {
+                false // lowercases to ASCII, so it cannot hold the non-ASCII needle
+            } else {
+                lowered.clear();
+                lowered.extend(name.chars().flat_map(char::to_lowercase));
+                lowered.contains(&needle)
+            }
+        };
+        let mut best = TopN::new(limit);
+        let mut count = 0;
+        let mut stack = vec![root];
+        while let Some(dir) = stack.pop() {
+            for c in self.children(dir) {
+                if matches(self.name(c)) {
+                    count += 1;
+                    best.push(self.node(c).metric(metric), c);
+                }
+                if self.node(c).is_dir {
+                    stack.push(c);
+                }
+            }
+        }
+        (count, best.into_ids())
+    }
+}
+
+/// The `limit` largest of the ids pushed, kept in a min-heap.
+struct TopN {
+    limit: usize,
+    heap: std::collections::BinaryHeap<std::cmp::Reverse<(u64, std::cmp::Reverse<u32>)>>,
+}
+
+impl TopN {
+    fn new(limit: usize) -> Self {
+        Self {
+            limit,
+            heap: std::collections::BinaryHeap::with_capacity(limit + 1),
+        }
+    }
+
+    /// Whether an item of size `m` would get into the list now.
+    fn could_take(&self, m: u64) -> bool {
+        self.heap.len() < self.limit || self.heap.peek().is_some_and(|min| m > min.0.0)
+    }
+
+    fn push(&mut self, m: u64, id: u32) {
+        if self.could_take(m) {
+            self.heap.push(std::cmp::Reverse((m, std::cmp::Reverse(id))));
+            if self.heap.len() > self.limit {
+                self.heap.pop();
+            }
+        }
+    }
+
+    /// Ids, largest first.
+    fn into_ids(self) -> Vec<u32> {
+        self.heap
+            .into_sorted_vec()
             .into_iter()
-            .map(|Reverse((_, Reverse(id)))| id)
+            .map(|std::cmp::Reverse((_, std::cmp::Reverse(id)))| id)
             .collect()
     }
 }
@@ -394,6 +461,41 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn search_ignores_case_and_counts_all_matches() {
+        let raw = RawDir {
+            name: "root".into(),
+            files: vec![file("Report.PDF", 50), file("notes.txt", 5)],
+            subdirs: vec![RawDir {
+                name: "Отчёты".into(),
+                files: vec![file("report-2025.pdf", 70), file("ОТЧЁТ.docx", 30)],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let m = Model::from_raw(raw, "X:\\".into(), 1);
+        let names = |ids: Vec<u32>| ids.into_iter().map(|i| m.name(i).to_string()).collect::<Vec<_>>();
+
+        let (count, ids) = m.search(0, "REPORT", Metric::Logical, 10);
+        assert_eq!(count, 2);
+        assert_eq!(names(ids), ["report-2025.pdf", "Report.PDF"]);
+
+        // Cyrillic, case-insensitive: the folder and a file inside it.
+        let (count, ids) = m.search(0, "отчё", Metric::Logical, 10);
+        assert_eq!(count, 2);
+        assert_eq!(names(ids), ["Отчёты", "ОТЧЁТ.docx"]);
+
+        // The limit keeps the largest, the count stays complete.
+        let (count, ids) = m.search(0, ".", Metric::Logical, 2);
+        assert_eq!(count, 4);
+        assert_eq!(names(ids), ["report-2025.pdf", "Report.PDF"]);
+
+        // Only under the given root; an empty query finds nothing.
+        let sub = m.find_dir(&["Отчёты"]);
+        assert_eq!(m.search(sub, "pdf", Metric::Logical, 10).0, 1);
+        assert_eq!(m.search(0, "", Metric::Logical, 10), (0, Vec::new()));
     }
 
     #[test]

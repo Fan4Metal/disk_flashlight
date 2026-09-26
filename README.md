@@ -20,6 +20,7 @@ The project is written in Rust and uses [egui](https://github.com/emilk/egui) wi
 - Context menu on right-click with **Open in Explorer** and **Properties** for the sector under the cursor, or for the current directory when the centre is right-clicked.
 - Directory tree on the left, synchronised with the chart in both directions. While the mouse moves over the chart, the tree is temporarily expanded to the hovered item; the **Follow in tree** toolbar option (enabled by default) turns this off.
 - **Largest files** tab next to the tree: the 100 largest files under the centre of the chart, with their folders. Hovering a row highlights the file on the chart, and a click moves the chart into the file's folder, where the file stays selected in the list.
+- **Search** tab (`Ctrl+F`): files and folders of the whole scan whose names contain the typed text, ignoring case; the 200 largest matches are listed with the total count. A click on a folder makes it the centre of the chart, a click on a file moves into its folder.
 - Two colour schemes selectable in the toolbar: **by size**, where the largest item among its siblings is red and smaller ones shift towards yellow, with colours becoming paler towards the rim (as in OverDisk), and **by level**, where the colour depends on the ring.
 - Physical (cluster-rounded, compressed and sparse files taken into account) or logical size as the chart metric.
 - Status bar with directory and file counts, logical size, allocated size and slack for the current root.
@@ -72,7 +73,7 @@ The `--mft` option requests administrator rights only where they speed up the sc
 
 The version is shown in the window title.
 
-Keyboard shortcuts: `Backspace` goes up, `Alt+Left` and `Alt+Right` move through history, `F5` rescans, `F1` opens the **About** window (also available from the toolbar). A rescan keeps the current folder and the navigation history; if the folder no longer exists, the view moves to its closest remaining parent. The mouse wheel zooms the chart towards the cursor; dragging with the middle mouse button pans it, and a middle-button double click restores the initial view.
+Keyboard shortcuts: `Backspace` goes up, `Alt+Left` and `Alt+Right` move through history, `F5` rescans, `Ctrl+F` opens the search, `F1` opens the **About** window (also available from the toolbar). A rescan keeps the current folder and the navigation history; if the folder no longer exists, the view moves to its closest remaining parent. The mouse wheel zooms the chart towards the cursor; dragging with the middle mouse button pans it, and a middle-button double click restores the initial view.
 
 ## Project layout
 
@@ -84,7 +85,7 @@ Keyboard shortcuts: `Backspace` goes up, `Alt+Left` and `Alt+Right` move through
 | `src/scan/win.rs` | Win32 helpers: drive enumeration, cluster size, compressed sizes |
 | `src/layout.rs` | Sunburst layout and hit testing |
 | `src/render.rs` | Tessellation of sectors into an `egui::Mesh`, palette |
-| `src/ui/` | Chart widget, directory tree, largest-files list, toolbar and status bar |
+| `src/ui/` | Chart widget, directory tree, largest-files list, search, toolbar and status bar |
 | `src/history.rs` | Back/forward navigation history |
 | `src/settings.rs` | Settings kept between runs |
 | `tools/` | Installer script (`setup.iss`) and release script (`make_release.py`) |

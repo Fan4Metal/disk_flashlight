@@ -15,6 +15,7 @@ use crate::ui::about::AboutDialog;
 use crate::ui::SideView;
 use crate::ui::chart::{ChartAction, ChartView};
 use crate::ui::files::FilesView;
+use crate::ui::search::SearchView;
 use crate::ui::tree::TreeView;
 
 pub struct App {
@@ -28,6 +29,7 @@ pub struct App {
     pub chart: ChartView,
     pub tree: TreeView,
     pub files: FilesView,
+    pub search: SearchView,
     pub side: SideView,
     pub tree_hovered: Option<u32>,
     pub about: AboutDialog,
@@ -62,6 +64,7 @@ impl App {
             chart: ChartView::default(),
             tree: TreeView::default(),
             files: FilesView::default(),
+            search: SearchView::default(),
             side: settings.side_view,
             tree_hovered: None,
             about: AboutDialog::default(),
@@ -129,9 +132,7 @@ impl App {
                     .drives
                     .iter()
                     .position(|d| d.root.eq_ignore_ascii_case(&model.root_path))
-                {
-                    self.drive_idx = i;
-                }
+                    .unwrap_or(usize::MAX);
                 // A rescan of the same path keeps the current folder (or its
                 // closest surviving ancestor) and the history; anything else
                 // starts at the root.
@@ -143,6 +144,7 @@ impl App {
                 }
                 self.tree.reset();
                 self.files.reset();
+                self.search.reset();
                 self.tree.reveal(&model, self.nav.root);
                 let root = std::path::Path::new(&model.root_path);
                 self.disk = if root.parent().is_none() {
@@ -236,17 +238,22 @@ impl App {
         if ctx.memory(|m| m.focused().is_some()) {
             return;
         }
-        let (back, fwd, up, rescan, about) = ctx.input(|i| {
+        let (back, fwd, up, rescan, about, find) = ctx.input(|i| {
             (
                 i.modifiers.matches_exact(Modifiers::ALT) && i.key_pressed(Key::ArrowLeft),
                 i.modifiers.matches_exact(Modifiers::ALT) && i.key_pressed(Key::ArrowRight),
                 i.key_pressed(Key::Backspace),
                 i.key_pressed(Key::F5),
                 i.key_pressed(Key::F1),
+                i.modifiers.matches_exact(Modifiers::COMMAND) && i.key_pressed(Key::F),
             )
         });
         if about {
             self.about.open = true;
+        }
+        if find {
+            self.side = SideView::Search;
+            self.search.focus = true;
         }
         if back {
             self.go_back();
@@ -315,16 +322,19 @@ impl eframe::App for App {
             .default_size(300.0)
             .min_size(160.0)
             .show(root_ui, |ui| {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.selectable_value(&mut self.side, SideView::Folders, "Folders");
                     ui.selectable_value(&mut self.side, SideView::LargestFiles, "Largest files")
                         .on_hover_text("The 100 largest files under the centre of the chart");
+                    ui.selectable_value(&mut self.side, SideView::Search, "Search")
+                        .on_hover_text("Find files and folders by name (Ctrl+F)");
                 });
                 ui.separator();
                 let (root, metric, hovered) = (self.nav.root, self.metric, self.chart.hovered);
                 tree_action = Some(match self.side {
                     SideView::Folders => self.tree.show(ui, &model, root, metric, hovered),
                     SideView::LargestFiles => self.files.show(ui, &model, root, metric, hovered),
+                    SideView::Search => self.search.show(ui, &model, metric, hovered),
                 });
             });
         if let Some(a) = tree_action {

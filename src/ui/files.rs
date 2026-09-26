@@ -8,7 +8,7 @@ use crate::ui::tree::TreeAction;
 
 /// Number of files listed.
 const LIMIT: usize = 100;
-const ROW_HEIGHT: f32 = 20.0;
+pub(super) const ROW_HEIGHT: f32 = 20.0;
 
 #[derive(Default)]
 pub struct FilesView {
@@ -62,53 +62,67 @@ impl FilesView {
         area.show_rows(ui, ROW_HEIGHT, self.rows.len(), |ui, range| {
             for (id, folder) in &self.rows[range] {
                 let id = *id;
-                ui.horizontal(|ui| {
-                    ui.set_min_height(ROW_HEIGHT);
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.weak(human_size(model.node(id).metric(metric)));
-                        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                            let mut text = egui::text::LayoutJob::default();
-                            let style = ui.style();
-                            RichText::new(model.name(id)).append_to(
-                                &mut text,
-                                style,
-                                egui::FontSelection::Default,
-                                Align::Center,
-                            );
-                            if !folder.is_empty() {
-                                RichText::new(format!("   {folder}")).weak().append_to(
-                                    &mut text,
-                                    style,
-                                    egui::FontSelection::Default,
-                                    Align::Center,
-                                );
-                            }
-                            let highlighted = Some(id) == self.selected || Some(id) == chart_hovered;
-                            let label = ui
-                                .add(egui::Button::selectable(highlighted, text).truncate())
-                                .on_hover_ui(|ui| {
-                                    ui.label(model.path(id));
-                                });
-                            if label.clicked() {
-                                self.selected = Some(id);
-                                action.selected = Some(model.node(id).parent);
-                            }
-                            if label.hovered() {
-                                action.hovered = Some(id);
-                            }
-                        });
-                    });
-                });
+                let highlighted = Some(id) == self.selected || Some(id) == chart_hovered;
+                let row = item_row(ui, model, id, folder, metric, highlighted);
+                if row.clicked() {
+                    self.selected = Some(id);
+                    action.selected = Some(model.node(id).parent);
+                }
+                if row.hovered() {
+                    action.hovered = Some(id);
+                }
             }
         });
         action
     }
 }
 
-/// Folder of `file` relative to `root` (`""` directly under the root).
-fn folder_under(model: &Model, root: u32, file: u32) -> String {
+/// One list row: the item's name, then its `folder` (weak), and its size on
+/// the right; the full path is in the tooltip.
+pub(super) fn item_row(
+    ui: &mut Ui,
+    model: &Model,
+    id: u32,
+    folder: &str,
+    metric: Metric,
+    highlighted: bool,
+) -> egui::Response {
+    ui.horizontal(|ui| {
+        ui.set_min_height(ROW_HEIGHT);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.weak(human_size(model.node(id).metric(metric)));
+            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                let mut text = egui::text::LayoutJob::default();
+                let style = ui.style();
+                let mut name = model.name(id).to_string();
+                if model.node(id).is_dir {
+                    name.push('\\');
+                }
+                RichText::new(name).append_to(&mut text, style, egui::FontSelection::Default, Align::Center);
+                if !folder.is_empty() {
+                    RichText::new(format!("   {folder}")).weak().append_to(
+                        &mut text,
+                        style,
+                        egui::FontSelection::Default,
+                        Align::Center,
+                    );
+                }
+                ui.add(egui::Button::selectable(highlighted, text).truncate())
+                    .on_hover_ui(|ui| {
+                        ui.label(model.path(id));
+                    })
+            })
+            .inner
+        })
+        .inner
+    })
+    .inner
+}
+
+/// Folder of `item` relative to `root` (`""` directly under the root).
+pub(super) fn folder_under(model: &Model, root: u32, item: u32) -> String {
     let mut parts = Vec::new();
-    let mut cur = model.node(file).parent;
+    let mut cur = model.node(item).parent;
     while cur != root && cur != NO_NODE {
         parts.push(model.name(cur));
         cur = model.node(cur).parent;
