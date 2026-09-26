@@ -1,11 +1,9 @@
-//! Parallel directory walk built on `std::fs::read_dir`.
+//! Parallel directory walk.
 //!
-//! On Windows `read_dir` maps to `FindFirstFileExW`/`FindNextFileW` and the
-//! `DirEntry` carries the full `WIN32_FIND_DATAW`, so `file_type()` and
-//! `metadata()` are free (no extra syscalls per entry). Subdirectories are
-//! processed through rayon's work-stealing pool.
+//! Each directory is listed with `win::list_dir`, which returns names,
+//! attributes and sizes in 64 KiB batches (no extra syscall per entry).
+//! Subdirectories are processed through rayon's work-stealing pool.
 
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
 
@@ -73,8 +71,6 @@ fn round_up(size: u64, cluster: u64) -> u64 {
 }
 
 fn scan_dir(path: &Path, name: String, cluster: u64, progress: &Progress) -> RawDir {
-    use std::os::windows::fs::MetadataExt;
-
     let mut dir = RawDir {
         name,
         ..Default::default()
@@ -82,53 +78,35 @@ fn scan_dir(path: &Path, name: String, cluster: u64, progress: &Progress) -> Raw
     if progress.cancel.load(Relaxed) {
         return dir;
     }
-    let rd = match fs::read_dir(path) {
-        Ok(rd) => rd,
-        Err(_) => {
-            progress.errors.fetch_add(1, Relaxed);
-            return dir;
-        }
-    };
+    let mut entries = Vec::new();
+    // An unreadable directory counts as one error; entries listed before a
+    // failure are kept.
+    let errors = u64::from(super::win::list_dir(path, &mut entries).is_err());
 
     let mut subdirs: Vec<(PathBuf, String)> = Vec::new();
     let mut bytes = 0u64;
-    let mut errors = 0u64;
-    for entry in rd {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => {
-                errors += 1;
-                continue;
-            }
-        };
-        let Ok(ft) = entry.file_type() else {
-            errors += 1;
-            continue;
-        };
+    for e in entries {
         // Symlinks and junctions are skipped to avoid cycles / double counting.
-        if ft.is_symlink() {
+        if e.is_link() {
             continue;
         }
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if ft.is_dir() {
-            subdirs.push((entry.path(), name));
+        if e.is_dir() {
+            subdirs.push((path.join(&e.name), e.name));
             continue;
         }
-        let Ok(md) = entry.metadata() else {
-            errors += 1;
-            continue;
-        };
-        let size = md.len();
-        let attrs = md.file_attributes();
-        let alloc = if attrs & (FILE_ATTRIBUTE_COMPRESSED | FILE_ATTRIBUTE_SPARSE_FILE) != 0 {
-            super::win::compressed_size(&entry.path())
+        let alloc = if e.attrs & (FILE_ATTRIBUTE_COMPRESSED | FILE_ATTRIBUTE_SPARSE_FILE) != 0 {
+            super::win::compressed_size(&path.join(&e.name))
                 .map(|s| round_up(s, cluster))
-                .unwrap_or_else(|| round_up(size, cluster))
+                .unwrap_or_else(|| round_up(e.size, cluster))
         } else {
-            round_up(size, cluster)
+            round_up(e.size, cluster)
         };
-        bytes += size;
-        dir.files.push(RawFile { name, size, alloc });
+        bytes += e.size;
+        dir.files.push(RawFile {
+            name: e.name,
+            size: e.size,
+            alloc,
+        });
     }
 
     progress.files.fetch_add(dir.files.len() as u64, Relaxed);

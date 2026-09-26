@@ -1,4 +1,5 @@
-//! Thin Win32 helpers: volume enumeration, cluster size, compressed sizes.
+//! Thin Win32 helpers: volume enumeration, cluster size, compressed sizes,
+//! directory listing.
 
 use std::path::Path;
 
@@ -154,6 +155,120 @@ pub fn compressed_size(path: &Path) -> Option<u64> {
     Some(((high as u64) << 32) | low as u64)
 }
 
+/// One entry of a directory listing.
+#[derive(Debug)]
+pub struct DirEntry {
+    pub name: String,
+    pub attrs: u32,
+    /// Reparse tag when `attrs` has `FILE_ATTRIBUTE_REPARSE_POINT`.
+    pub reparse_tag: u32,
+    /// Logical size (end of file).
+    pub size: u64,
+}
+
+impl DirEntry {
+    /// Symbolic link, junction or another name-surrogate reparse point: the
+    /// same rule as `std::fs::FileType::is_symlink`.
+    pub fn is_link(&self) -> bool {
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        const NAME_SURROGATE_BIT: u32 = 0x2000_0000;
+        self.attrs & FILE_ATTRIBUTE_REPARSE_POINT != 0 && self.reparse_tag & NAME_SURROGATE_BIT != 0
+    }
+
+    pub fn is_dir(&self) -> bool {
+        const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+        self.attrs & FILE_ATTRIBUTE_DIRECTORY != 0 && !self.is_link()
+    }
+}
+
+/// Bytes requested per directory query.
+const LIST_BUF_BYTES: usize = 64 << 10;
+
+/// Append the entries of directory `path` (without `.` and `..`) to `out`.
+///
+/// `GetFileInformationByHandleEx(FileFullDirectoryInfo)` returns up to
+/// `LIST_BUF_BYTES` of entries per call, where `read_dir` fetches a few KiB per
+/// `FindNextFileW`. On an error the entries read so far are kept.
+pub fn list_dir(path: &Path, out: &mut Vec<DirEntry>) -> std::io::Result<()> {
+    use std::cell::RefCell;
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::ERROR_NO_MORE_FILES;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_LIST_DIRECTORY, FILE_SHARE_DELETE, FILE_SHARE_READ,
+        FILE_SHARE_WRITE, FileFullDirectoryInfo, GetFileInformationByHandleEx,
+    };
+
+    thread_local! {
+        // u64 elements keep the 8-byte alignment the entries require.
+        static BUF: RefCell<Vec<u64>> = RefCell::new(vec![0; LIST_BUF_BYTES / 8]);
+    }
+
+    let dir = std::fs::OpenOptions::new()
+        .access_mode(FILE_LIST_DIRECTORY)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)?;
+    BUF.with_borrow_mut(|buf| loop {
+        let ok = unsafe {
+            GetFileInformationByHandleEx(
+                dir.as_raw_handle(),
+                FileFullDirectoryInfo,
+                buf.as_mut_ptr().cast(),
+                LIST_BUF_BYTES as u32,
+            )
+        };
+        if ok == 0 {
+            let err = std::io::Error::last_os_error();
+            return match err.raw_os_error() {
+                Some(code) if code == ERROR_NO_MORE_FILES as i32 => Ok(()),
+                _ => Err(err),
+            };
+        }
+        let bytes = unsafe { std::slice::from_raw_parts(buf.as_ptr().cast::<u8>(), LIST_BUF_BYTES) };
+        parse_full_dir_info(bytes, out);
+    })
+}
+
+/// Decode a buffer of chained `FILE_FULL_DIR_INFO` records.
+fn parse_full_dir_info(buf: &[u8], out: &mut Vec<DirEntry>) {
+    use std::mem::offset_of;
+    use windows_sys::Win32::Storage::FileSystem::FILE_FULL_DIR_INFO as Info;
+
+    let u32_at = |o: usize| u32::from_le_bytes(buf[o..o + 4].try_into().unwrap());
+    let u64_at = |o: usize| u64::from_le_bytes(buf[o..o + 8].try_into().unwrap());
+    let name_off = offset_of!(Info, FileName);
+    let mut pos = 0usize;
+    loop {
+        if pos + name_off > buf.len() {
+            return;
+        }
+        let name_len = u32_at(pos + offset_of!(Info, FileNameLength)) as usize;
+        let name_start = pos + name_off;
+        let Some(name_bytes) = buf.get(name_start..name_start + name_len) else {
+            return;
+        };
+        let units = name_bytes.as_chunks::<2>().0.iter().map(|&c| u16::from_le_bytes(c));
+        let name: String = char::decode_utf16(units)
+            .map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER))
+            .collect();
+        if name != "." && name != ".." {
+            out.push(DirEntry {
+                name,
+                attrs: u32_at(pos + offset_of!(Info, FileAttributes)),
+                // For reparse points the EA size field carries the tag.
+                reparse_tag: u32_at(pos + offset_of!(Info, EaSize)),
+                size: u64_at(pos + offset_of!(Info, EndOfFile)),
+            });
+        }
+        let next = u32_at(pos + offset_of!(Info, NextEntryOffset)) as usize;
+        if next == 0 {
+            return;
+        }
+        pos += next;
+    }
+}
+
 /// Whether the process runs with administrator rights (needed for MFT reads).
 pub fn is_elevated() -> bool {
     unsafe { windows_sys::Win32::UI::Shell::IsUserAnAdmin() != 0 }
@@ -216,4 +331,75 @@ pub fn show_properties(path: &str) -> bool {
         )
     };
     ok != 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::mem::offset_of;
+    use windows_sys::Win32::Storage::FileSystem::FILE_FULL_DIR_INFO as Info;
+
+    /// Chain `FILE_FULL_DIR_INFO` records the way the file system does:
+    /// 8-byte aligned, the last one with `NextEntryOffset == 0`.
+    fn records(entries: &[(&str, u32, u32, u64)]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        let mut last = 0;
+        for &(name, attrs, ea, size) in entries {
+            let start = buf.len();
+            let name: Vec<u16> = name.encode_utf16().collect();
+            let len = offset_of!(Info, FileName) + 2 * name.len();
+            buf.resize(start + len.next_multiple_of(8), 0);
+            let mut put = |off: usize, bytes: &[u8]| {
+                buf[start + off..start + off + bytes.len()].copy_from_slice(bytes)
+            };
+            put(offset_of!(Info, EndOfFile), &size.to_le_bytes());
+            put(offset_of!(Info, FileAttributes), &attrs.to_le_bytes());
+            put(offset_of!(Info, FileNameLength), &(2 * name.len() as u32).to_le_bytes());
+            put(offset_of!(Info, EaSize), &ea.to_le_bytes());
+            for (i, u) in name.iter().enumerate() {
+                put(offset_of!(Info, FileName) + 2 * i, &u.to_le_bytes());
+            }
+            if start > 0 {
+                let next = (start - last) as u32;
+                buf[last..last + 4].copy_from_slice(&next.to_le_bytes());
+            }
+            last = start;
+        }
+        buf
+    }
+
+    #[test]
+    fn parses_directory_listing() {
+        const DIR: u32 = 0x10;
+        const REPARSE: u32 = 0x400;
+        const JUNCTION: u32 = 0xA000_0003;
+        const APPEXECLINK: u32 = 0x8000_001B;
+        let buf = records(&[
+            (".", DIR, 0, 0),
+            ("..", DIR, 0, 0),
+            ("a.txt", 0x20, 0, 5),
+            ("Документы", DIR, 0, 0),
+            ("link", DIR | REPARSE, JUNCTION, 0),
+            ("app.exe", REPARSE, APPEXECLINK, 0),
+        ]);
+        let mut out = Vec::new();
+        parse_full_dir_info(&buf, &mut out);
+        let names: Vec<&str> = out.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, ["a.txt", "Документы", "link", "app.exe"]);
+        assert_eq!(out[0].size, 5);
+        assert!(!out[0].is_dir() && !out[0].is_link());
+        assert!(out[1].is_dir() && !out[1].is_link());
+        // A junction is a link, not a directory to descend into.
+        assert!(out[2].is_link() && !out[2].is_dir());
+        // App execution aliases are not name surrogates: plain files.
+        assert!(!out[3].is_link() && !out[3].is_dir());
+    }
+
+    #[test]
+    fn truncated_buffer_stops_cleanly() {
+        let buf = records(&[("first", 0x20, 0, 1), ("second", 0x20, 0, 2)]);
+        let mut out = Vec::new();
+        parse_full_dir_info(&buf[..buf.len() - 4], &mut out);
+        assert_eq!(out.len(), 1);
+    }
 }
