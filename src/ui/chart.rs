@@ -19,6 +19,8 @@ pub enum ChartAction {
     None,
     Navigate(u32),
     Up,
+    OpenInExplorer(u32),
+    Properties(u32),
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -35,6 +37,8 @@ pub struct ChartView {
     pub zoom: f32,
     /// Node under the mouse during the last frame.
     pub hovered: Option<u32>,
+    /// Node whose context menu is open (right-clicked sector or the root).
+    menu_node: Option<u32>,
     layout: Option<Layout>,
     mesh: Option<Arc<Mesh>>,
     key: Option<CacheKey>,
@@ -47,6 +51,7 @@ impl Default for ChartView {
             palette: Palette::default(),
             zoom: 1.0,
             hovered: None,
+            menu_node: None,
             layout: None,
             mesh: None,
             key: None,
@@ -60,6 +65,7 @@ impl ChartView {
         self.key = None;
         self.layout = None;
         self.mesh = None;
+        self.menu_node = None;
     }
 
     pub fn show(
@@ -136,8 +142,16 @@ impl ChartView {
 
         // Hover / highlight.
         let pointer = response.hover_pos();
-        let hit = pointer.and_then(|p| layout.hit_test(p));
-        self.hovered = hit.map(|(ring, i)| layout.rings[ring][i].node);
+        // While a context menu is open its sector stays highlighted and the
+        // tooltip is hidden, so the highlight shows what the menu acts on.
+        let hit = match self.menu_node {
+            Some(n) => layout.index.get(&n).copied(),
+            None => pointer.and_then(|p| layout.hit_test(p)),
+        };
+        self.hovered = match self.menu_node {
+            Some(n) => Some(n),
+            None => hit.map(|(ring, i)| layout.rings[ring][i].node),
+        };
 
         if let Some((ring, i)) = hit {
             let overlay = render::highlight_mesh(layout, ring, i, Color32::from_white_alpha(70));
@@ -158,9 +172,20 @@ impl ChartView {
 
         // Click handling.
         let mut action = ChartAction::None;
+        // A left click while a menu is open only dismisses the menu.
+        let menu_was_open = self.menu_node.is_some();
         if response.secondary_clicked() {
-            action = ChartAction::Up;
+            // Right click: context menu for a sector, or for the current root
+            // when the centre disc is clicked; nothing on empty space.
+            self.menu_node = response.interact_pointer_pos().and_then(|p| {
+                if layout.is_center(p) {
+                    Some(root)
+                } else {
+                    layout.hit_test(p).map(|(ring, i)| layout.rings[ring][i].node)
+                }
+            });
         } else if response.clicked()
+            && !menu_was_open
             && let Some(p) = response.interact_pointer_pos() {
                 if layout.is_center(p) {
                     action = ChartAction::Up;
@@ -172,11 +197,29 @@ impl ChartView {
                 }
             }
 
+        if let Some(node) = self.menu_node {
+            // Popup::context_menu opens on this frame's secondary click and
+            // returns None once the menu has been closed.
+            let shown = response.context_menu(|ui| {
+                if ui.button("Open in Explorer").clicked() {
+                    action = ChartAction::OpenInExplorer(node);
+                    ui.close();
+                }
+                if ui.button("Properties").clicked() {
+                    action = ChartAction::Properties(node);
+                    ui.close();
+                }
+            });
+            if shown.is_none() {
+                self.menu_node = None;
+            }
+        }
+
         // Tooltip, shown immediately (no hover delay) like in OverDisk. It is
         // anchored to a box covering the arrow cursor rather than to the
         // pointer itself, so it opens below the arrow instead of under it;
         // near screen edges egui flips it to the other side of that box.
-        if let (Some(node), Some(p)) = (self.hovered, pointer) {
+        if let (None, Some(node), Some(p)) = (self.menu_node, self.hovered, pointer) {
             let n = model.node(node);
             let cursor_box = egui::Rect::from_min_size(p, CURSOR_SIZE);
             egui::Tooltip::always_open(

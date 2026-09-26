@@ -176,3 +176,37 @@ pub fn relaunch_elevated(args: &str) -> bool {
     // ShellExecute returns a value > 32 on success.
     h as isize > 32
 }
+
+/// Open `path` in Explorer: a directory is opened itself, a file is shown
+/// selected in its parent folder.
+pub fn open_in_explorer(path: &str, is_dir: bool) {
+    use std::os::windows::process::CommandExt;
+    let mut cmd = std::process::Command::new("explorer.exe");
+    // raw_arg: Explorer parses its own command line, and std's quoting would
+    // escape the trailing backslash of a drive root. Paths cannot contain
+    // quotes on Windows, so plain quoting is safe.
+    if is_dir {
+        cmd.raw_arg(format!("\"{path}\""));
+    } else {
+        cmd.raw_arg(format!("/select,\"{path}\""));
+    }
+    if let Err(e) = cmd.spawn() {
+        log::warn!("explorer.exe failed for {path}: {e}");
+    }
+}
+
+/// Show the standard Explorer "Properties" dialog for a file, folder or drive.
+/// The dialog runs on its own thread; this returns immediately.
+pub fn show_properties(path: &str) -> bool {
+    use windows_sys::Win32::UI::Shell::{SHOP_FILEPATH, SHObjectProperties};
+    let wpath = wide(path);
+    let ok = unsafe {
+        SHObjectProperties(
+            std::ptr::null_mut(),
+            SHOP_FILEPATH as u32,
+            wpath.as_ptr(),
+            std::ptr::null(),
+        )
+    };
+    ok != 0
+}

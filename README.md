@@ -14,7 +14,8 @@ The project is written in Rust and uses [egui](https://github.com/emilk/egui) wi
 - Parallel directory walk for subdirectories, non-NTFS volumes and non-elevated runs (the same `C:` drive takes about 8 seconds on a cold cache and under 3 seconds on a warm one). The **Admin** toolbar button restarts the application elevated.
 - Sunburst chart with up to seven rings, rendered as a single cached GPU mesh; sectors thinner than one pixel are dropped, so the chart stays responsive regardless of tree size.
 - Tooltip with name, logical and allocated size, and directory and file counts for the sector under the cursor.
-- Click on a directory sector to make it the centre; right-click or click the centre to go up; back, forward and up navigation with history.
+- Click on a directory sector to make it the centre; a click on the centre goes up; back, forward and up navigation with history.
+- Context menu on right-click with **Open in Explorer** and **Properties** for the sector under the cursor, or for the current directory when the centre is right-clicked.
 - Directory tree on the left, synchronised with the chart in both directions.
 - Physical (cluster-rounded, compressed and sparse files taken into account) or logical size as the chart metric.
 - Status bar with directory and file counts, logical size, allocated size and slack for the current root.

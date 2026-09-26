@@ -258,6 +258,16 @@ impl eframe::App for App {
             ChartAction::None => {}
             ChartAction::Navigate(id) => self.navigate(id),
             ChartAction::Up => self.go_up(),
+            ChartAction::OpenInExplorer(id) => {
+                let path = model.path(id);
+                scan::win::open_in_explorer(&path, model.node(id).is_dir);
+            }
+            ChartAction::Properties(id) => {
+                let path = model.path(id);
+                if !scan::win::show_properties(&path) {
+                    self.status = format!("No properties available for {path}");
+                }
+            }
         }
     }
 }
