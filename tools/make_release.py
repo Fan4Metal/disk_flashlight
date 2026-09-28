@@ -1,9 +1,11 @@
 """
-Сборка выпуска: cargo build --release + установщик Inno Setup (dist\\Disk_Flashlight_<версия>_Setup.exe)
-и портативный архив (dist\\Disk_Flashlight_<версия>_portable.zip).
+Release build: cargo build --release, the Inno Setup installer
+(dist\\Disk_Flashlight_<version>_Setup.exe) and the portable archive
+(dist\\Disk_Flashlight_<version>_portable.zip).
 
-Запускается из любой папки: python tools/make_release.py [--no-tests]
-Внешних зависимостей нет. Вывод cargo и ISCC показывается как есть, чтобы был виден ход сборки.
+Runs from any folder: python tools/make_release.py [--no-tests]
+No external dependencies. The output of cargo and ISCC is shown as is, so that
+the progress of the build is visible.
 """
 
 import argparse
@@ -23,9 +25,9 @@ DIST_DIR = ROOT / "dist"
 EXE = ROOT / "target" / "release" / "disk_flashlight.exe"
 ICON = ROOT / "target" / "app.ico"
 
-# Файлы, которые установщик берёт из репозитория (см. [Files] в setup.iss).
+# Files the installer takes from the repository (see [Files] in setup.iss).
 BUNDLED_FILES = ["LICENSE", "README.md", "README.ru.md"]
-# Папка внутри портативного архива: при распаковке «сюда» exe не оказывается среди чужих файлов.
+# Folder inside the portable archive, so that extracting "here" does not drop the exe among other files.
 PORTABLE_DIR = "Disk Flashlight"
 
 ISCC_PATHS = [
@@ -36,7 +38,7 @@ ISCC_PATHS = [
 
 
 class ReleaseError(Exception):
-    """Ошибка сборки с готовым для показа сообщением."""
+    """Build failure with a message ready to be shown."""
 
 
 def human_size(num_bytes: int) -> str:
@@ -53,18 +55,18 @@ def fmt_cmd(command: list[str]) -> str:
 
 
 def run_command(command: list[str], title: str) -> None:
-    """Запускает команду, показывая её вывод как есть; при ошибке прерывает сборку."""
+    """Run a command, showing its output as is; stop the build if it fails."""
     print(f"$ {fmt_cmd(command)}\n")
     started = time.monotonic()
     result = subprocess.run(command, cwd=ROOT)
     elapsed = time.monotonic() - started
     if result.returncode != 0:
-        raise ReleaseError(f"{title}: команда завершилась с кодом {result.returncode} (за {elapsed:.0f} с)")
-    print(f"\n{title}: готово за {elapsed:.0f} с")
+        raise ReleaseError(f"{title}: the command exited with code {result.returncode} (after {elapsed:.0f} s)")
+    print(f"\n{title}: done in {elapsed:.0f} s")
 
 
 class Steps:
-    """Печатает заголовки шагов и время, ушедшее на предыдущий."""
+    """Print step headers and the time the previous step took."""
 
     def __init__(self, total: int):
         self.total = total
@@ -73,7 +75,7 @@ class Steps:
 
     def _close(self) -> None:
         if self.started is not None:
-            print(f"--- шаг занял {time.monotonic() - self.started:.1f} с")
+            print(f"--- step took {time.monotonic() - self.started:.1f} s")
 
     def next(self, title: str) -> None:
         self._close()
@@ -87,17 +89,17 @@ class Steps:
 
 
 def extract_version(path: Path) -> str:
-    """Версия из секции [package] в Cargo.toml."""
+    """Version from the [package] section of Cargo.toml."""
     content = path.read_text(encoding="utf-8")
     package = re.search(r"^\[package\](.*?)(?=^\[|\Z)", content, re.S | re.M)
     match = package and re.search(r'^version\s*=\s*"([^"]+)"', package.group(1), re.M)
     if not match:
-        raise ReleaseError(f"версия пакета не найдена в {path}")
+        raise ReleaseError(f"package version not found in {path}")
     return match.group(1)
 
 
 def windows_version(version: str) -> str:
-    """0.1.0 -> 0.1.0.0: VersionInfoVersion требует четыре числа."""
+    """0.1.0 -> 0.1.0.0: VersionInfoVersion needs four numbers."""
     numbers = [int(n) for n in re.findall(r"\d+", version.split("-")[0])][:4]
     return ".".join(str(n) for n in numbers + [0] * (4 - len(numbers)))
 
@@ -106,11 +108,11 @@ def find_cargo() -> str:
     found = shutil.which("cargo")
     if found:
         return found
-    # rustup ставился с --no-modify-path: в новых оболочках cargo может не быть в PATH.
+    # rustup installed with --no-modify-path leaves cargo off PATH in new shells.
     fallback = Path.home() / ".cargo" / "bin" / "cargo.exe"
     if fallback.is_file():
         return str(fallback)
-    raise ReleaseError("не найден cargo: установите Rust (rustup) или добавьте ~/.cargo/bin в PATH")
+    raise ReleaseError("cargo not found: install Rust (rustup) or add ~/.cargo/bin to PATH")
 
 
 def find_iscc() -> Path:
@@ -120,24 +122,24 @@ def find_iscc() -> Path:
     found = shutil.which("ISCC")
     if found:
         return Path(found)
-    raise ReleaseError("не найден ISCC.exe: установите Inno Setup 6 или добавьте ISCC в PATH")
+    raise ReleaseError("ISCC.exe not found: install Inno Setup 6 or add ISCC to PATH")
 
 
 def check_exe_not_running() -> None:
-    """Запущенный exe заблокирован Windows, и cargo не сможет его перезаписать."""
+    """A running exe is locked by Windows, and cargo could not overwrite it."""
     if not EXE.is_file():
         return
     try:
         with EXE.open("r+b"):
             pass
     except PermissionError:
-        raise ReleaseError(f"{EXE.relative_to(ROOT)} запущен: закройте Disk Flashlight и повторите сборку")
+        raise ReleaseError(f"{EXE.relative_to(ROOT)} is running: close Disk Flashlight and build again")
 
 
 def check_prerequisites() -> tuple[str, Path]:
     missing = [name for name in BUNDLED_FILES if not (ROOT / name).is_file()]
     if missing:
-        raise ReleaseError("не найдены файлы для установщика: " + ", ".join(missing))
+        raise ReleaseError("files for the installer not found: " + ", ".join(missing))
     cargo = find_cargo()
     iscc = find_iscc()
     print(f"  cargo:                 {cargo}")
@@ -147,9 +149,9 @@ def check_prerequisites() -> tuple[str, Path]:
 
 
 def make_portable_zip(version: str) -> Path:
-    """Архив с одним exe в папке PORTABLE_DIR (документация есть на GitHub)."""
+    """Archive with just the exe in the PORTABLE_DIR folder (the documentation is on GitHub)."""
     archive = DIST_DIR / f"Disk_Flashlight_{version}_portable.zip"
-    # Портативный exe прежних сборок больше не выпускается: убираем, чтобы не попал в релиз.
+    # Earlier builds made a portable exe, which is no longer released: remove it so that it is not uploaded.
     stale = DIST_DIR / f"Disk_Flashlight_{version}_portable.exe"
     stale.unlink(missing_ok=True)
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as z:
@@ -158,35 +160,35 @@ def make_portable_zip(version: str) -> Path:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Сборка выпуска Disk Flashlight")
-    parser.add_argument("--no-tests", action="store_true", help="не запускать cargo test")
+    parser = argparse.ArgumentParser(description="Build a Disk Flashlight release")
+    parser.add_argument("--no-tests", action="store_true", help="do not run cargo test")
     args = parser.parse_args()
 
-    # Построчная буферизация: при перенаправлении в файл заголовки шагов идут перед выводом сборщиков.
+    # Line buffering: with output redirected to a file, step headers still come before the tools' output.
     sys.stdout.reconfigure(line_buffering=True)
     total_started = time.monotonic()
     steps = Steps(4 if args.no_tests else 5)
     try:
-        steps.next("Проверка")
+        steps.next("Checks")
         version = extract_version(CARGO_TOML)
-        print(f"  версия:                {version} (из {CARGO_TOML.name})")
+        print(f"  version:               {version} (from {CARGO_TOML.name})")
         cargo, iscc = check_prerequisites()
 
         if not args.no_tests:
-            steps.next("Тесты")
+            steps.next("Tests")
             run_command([cargo, "test"], "cargo test")
 
-        steps.next("Сборка release")
+        steps.next("Release build")
         run_command([cargo, "build", "--release"], "cargo build")
         if not EXE.is_file():
-            raise ReleaseError(f"cargo завершился, но {EXE} не найден")
+            raise ReleaseError(f"cargo finished, but {EXE} was not found")
 
-        steps.next("Иконка установщика")
-        run_command([str(EXE), "--export-icon", str(ICON)], "экспорт иконки")
+        steps.next("Installer icon")
+        run_command([str(EXE), "--export-icon", str(ICON)], "icon export")
         if not ICON.is_file():
-            raise ReleaseError(f"иконка не создана: {ICON}")
+            raise ReleaseError(f"icon not created: {ICON}")
 
-        steps.next("Установщик Inno Setup")
+        steps.next("Inno Setup installer")
         run_command(
             [
                 str(iscc),
@@ -199,23 +201,23 @@ def main() -> int:
         )
         installer = DIST_DIR / f"Disk_Flashlight_{version}_Setup.exe"
         if not installer.is_file():
-            raise ReleaseError(f"ISCC завершился, но установщик не найден: {installer}")
-        # Имена без пробелов: GitHub заменяет пробелы в именах файлов релиза на точки.
+            raise ReleaseError(f"ISCC finished, but the installer was not found: {installer}")
+        # Names without spaces: GitHub replaces spaces in release file names with dots.
         portable = make_portable_zip(version)
-        print(f"Портативная версия: {portable.relative_to(ROOT)}")
+        print(f"Portable version: {portable.relative_to(ROOT)}")
         steps.finish()
 
     except ReleaseError as e:
-        print(f"\nОШИБКА: сборка прервана: {e}", file=sys.stderr)
+        print(f"\nERROR: build stopped: {e}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
-        print("\nОШИБКА: сборка прервана пользователем", file=sys.stderr)
+        print("\nERROR: build interrupted by the user", file=sys.stderr)
         return 1
 
     minutes, seconds = divmod(int(time.monotonic() - total_started), 60)
-    print(f"\n=== Выпуск {version} собран за {minutes} мин {seconds} с ===")
-    print(f"  установщик:  {installer}  ({human_size(installer.stat().st_size)})")
-    print(f"  портативная: {portable}  ({human_size(portable.stat().st_size)})")
+    print(f"\n=== Release {version} built in {minutes} min {seconds} s ===")
+    print(f"  installer:   {installer}  ({human_size(installer.stat().st_size)})")
+    print(f"  portable:    {portable}  ({human_size(portable.stat().st_size)})")
     return 0
 
 

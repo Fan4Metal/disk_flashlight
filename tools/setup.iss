@@ -1,5 +1,5 @@
-; Установщик Disk Flashlight (Inno Setup 6).
-; Собирается скриптом tools\make_release.py, который передаёт версию и путь к иконке:
+; Disk Flashlight installer (Inno Setup 6).
+; Built by tools\make_release.py, which passes the version and the icon path:
 ;   ISCC /DMyAppVersion=0.1.0 /DVersionInfoVersion=0.1.0.0 /DAppIcon=..\target\app.ico tools\setup.iss
 
 #define MyAppName "Disk Flashlight"
@@ -22,8 +22,8 @@ AppVersion={#MyAppVersion}
 VersionInfoVersion={#VersionInfoVersion}
 AppCopyright=Copyright (C) 2026 {#MyAppPublisher}
 AppPublisher={#MyAppPublisher}
-; Установка для текущего пользователя без прав администратора:
-; {autopf} указывает на %LOCALAPPDATA%\Programs.
+; Per-user installation without administrator rights:
+; {autopf} points to %LOCALAPPDATA%\Programs.
 PrivilegesRequired=lowest
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
@@ -66,10 +66,11 @@ Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Registry]
-; Пункт контекстного меню Проводника для папок (Directory) и дисков (Drive).
-; Ключи в HKCU, т.к. установка без прав администратора; удаляются при деинсталляции.
-; Для корня диска Проводник передаёт "C:\", что приложение получает как C:" и само
-; превращает обратно в C:\ (см. normalize в src\main.rs).
+; Explorer context menu item for folders (Directory) and drives (Drive).
+; The keys are under HKCU, as the installation needs no administrator rights;
+; they are removed on uninstall. For a drive root Explorer passes "C:\", which
+; the application receives as C:" and turns back into C:\ (see normalize in
+; src\main.rs).
 Root: HKCU; Subkey: "Software\Classes\Directory\shell\DiskFlashlight"; ValueType: string; ValueName: "MUIVerb"; ValueData: "{cm:ContextMenuVerb}"; Tasks: contextmenu; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\Directory\shell\DiskFlashlight"; ValueType: string; ValueName: "Icon"; ValueData: "{app}\{#MyAppExeName}"; Tasks: contextmenu
 Root: HKCU; Subkey: "Software\Classes\Directory\shell\DiskFlashlight\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: contextmenu
