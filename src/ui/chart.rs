@@ -294,8 +294,11 @@ impl ChartView {
                 let s = layout.rings[ring][i];
                 if s.is_group() {
                     zoom_to = Some(p);
-                } else if s.is_item() && model.node(s.node).is_dir {
-                    action = ChartAction::Navigate(s.node);
+                } else if s.is_item() {
+                    // A folder becomes the centre, a file takes the chart to
+                    // its folder (no change for a file right in the centre).
+                    let n = model.node(s.node);
+                    action = ChartAction::Navigate(if n.is_dir { s.node } else { n.parent });
                 }
             }
         }
@@ -352,6 +355,9 @@ impl ChartView {
                     }
                     matches_line(ui, model, layout, &s, hits);
                     ui.weak(model.path(s.node));
+                    if !n.is_dir && n.parent != root {
+                        ui.weak("Click to open its folder");
+                    }
                 }
             });
         }
