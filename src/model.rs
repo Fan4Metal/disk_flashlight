@@ -198,6 +198,39 @@ impl Model {
         }
     }
 
+    /// A copy without `id` and everything under it, the sizes and counts
+    /// above it reduced accordingly: the tree after deleting it. Ids change;
+    /// map them by path (`rel_path` / `find_dir`). `id` must not be the root.
+    pub fn without(&self, id: u32) -> Model {
+        debug_assert_ne!(id, 0, "the root cannot be removed");
+        Model::from_raw(self.raw_dir(0, id), self.root_path.clone(), self.cluster_size)
+    }
+
+    /// The subtree of `dir` as a scanner would produce it, leaving out
+    /// `skip`. Directories before files, each in stored order, so that the
+    /// stable sort in `pack_children` keeps the order of equal sizes.
+    fn raw_dir(&self, dir: u32, skip: u32) -> RawDir {
+        let mut d = RawDir {
+            name: self.name(dir).to_string(),
+            ..Default::default()
+        };
+        for c in self.children(dir) {
+            let n = self.node(c);
+            if c == skip {
+                continue;
+            } else if n.is_dir {
+                d.subdirs.push(self.raw_dir(c, skip));
+            } else {
+                d.files.push(RawFile {
+                    name: self.name(c).to_string(),
+                    size: n.size,
+                    alloc: n.alloc,
+                });
+            }
+        }
+        d
+    }
+
     #[inline]
     pub fn node(&self, id: u32) -> &Node {
         &self.nodes[id as usize]
@@ -1004,6 +1037,51 @@ mod tests {
         assert!(w("*.mp4", ".mp4") && !w("*.mp4", "mp4") && !w("*.mp4", "a.mp4x"));
         assert!(w("a*?c", "abc") && !w("a*?c", "ac"));
         assert!(w("*b*", "abc") && w("a*", "a"));
+    }
+
+    #[test]
+    fn without_removes_a_subtree_and_updates_totals() {
+        let raw = RawDir {
+            name: "root".into(),
+            files: vec![file("top.bin", 40)],
+            subdirs: vec![
+                RawDir {
+                    name: "a".into(),
+                    files: vec![file("a1", 30), file("a2", 20)],
+                    subdirs: vec![RawDir {
+                        name: "deep".into(),
+                        files: vec![file("d1", 5)],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+                RawDir {
+                    name: "b".into(),
+                    files: vec![file("b1", 50)],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let m = Model::from_raw(raw, "X:\\".into(), 1);
+        let names = |m: &Model, id| m.children(id).map(|c| m.name(c).to_string()).collect::<Vec<_>>();
+        assert_eq!(names(&m, 0), ["a", "b", "top.bin"]);
+
+        // A file: its folder and the root shrink, and "a" drops below "b".
+        let a = m.find_dir(&["a"]);
+        let a1 = m.children(a).find(|&c| m.name(c) == "a1").unwrap();
+        let n = m.without(a1);
+        assert_eq!(n.len(), m.len() - 1);
+        assert_eq!((n.node(0).size, n.node(0).files, n.node(0).dirs), (115, 4, 3));
+        assert_eq!(names(&n, 0), ["b", "top.bin", "a"]);
+        let na = n.find_dir(&["a"]);
+        assert_eq!((n.node(na).size, n.node(na).files), (25, 2));
+        assert_eq!(n.path(n.find_dir(&["a", "deep"])), "X:\\a\\deep");
+
+        // A folder goes with everything inside it.
+        let n = m.without(m.find_dir(&["a", "deep"]));
+        assert_eq!((n.node(0).size, n.node(0).files, n.node(0).dirs), (140, 4, 2));
+        assert_eq!(n.find_dir(&["a", "deep"]), n.find_dir(&["a"]));
     }
 
     #[test]

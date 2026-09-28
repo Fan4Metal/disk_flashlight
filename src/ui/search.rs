@@ -12,6 +12,7 @@ use egui::{
 use crate::format::{human_size, thousands};
 use crate::model::{ItemKind, Metric, Model, match_ranges};
 use crate::ui::files::{ROW_HEIGHT, folder_under, item_row};
+use crate::ui::item_menu;
 use crate::ui::tree::TreeAction;
 
 /// Number of matches listed (the largest ones).
@@ -174,6 +175,11 @@ impl SearchView {
                     if row.hovered() {
                         action.hovered = Some(id);
                     }
+                    row.context_menu(|ui| {
+                        if let Some(c) = item_menu(ui, id) {
+                            action.command = Some(c);
+                        }
+                    });
                 }
             });
         action

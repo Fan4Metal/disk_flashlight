@@ -250,6 +250,17 @@ fn bench(path: PathBuf, allow_mft: bool) -> anyhow::Result<()> {
         top.len()
     );
 
+    // The model rebuilt without a deleted item (the largest file).
+    if let Some(&victim) = top.first() {
+        let t = Instant::now();
+        let rest = model.without(victim);
+        println!(
+            "delete:    {:.2}ms  ({} nodes left)",
+            t.elapsed().as_secs_f64() * 1e3,
+            thousands(rest.len() as u64)
+        );
+    }
+
     // Drive picker: each drive is queried on its own thread at start-up.
     for root in scan::win::drive_roots() {
         let t = Instant::now();

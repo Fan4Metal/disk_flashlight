@@ -325,6 +325,37 @@ pub fn open_in_explorer(path: &str, is_dir: bool) {
     }
 }
 
+/// Move `path` to the Recycle Bin through the shell, which shows its own
+/// progress and error dialogs and, for an item that cannot be recycled
+/// (too large, a network drive), asks before deleting it for good. Blocks
+/// until done, so call it off the UI thread. `Err` says why it stopped;
+/// either way, check what is left on disk.
+pub fn recycle(path: &str) -> Result<(), String> {
+    use windows_sys::Win32::UI::Shell::{
+        FO_DELETE, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_WANTNUKEWARNING, SHFILEOPSTRUCTW,
+        SHFileOperationW,
+    };
+    // pFrom is a list of paths ending with an empty one: two NULs.
+    let mut from = wide(path);
+    from.push(0);
+    let mut op = SHFILEOPSTRUCTW {
+        wFunc: FO_DELETE,
+        pFrom: from.as_ptr(),
+        // Confirmation is the app's own; the shell still warns before a
+        // permanent delete.
+        fFlags: (FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_WANTNUKEWARNING) as u16,
+        ..Default::default()
+    };
+    let code = unsafe { SHFileOperationW(&mut op) };
+    if op.fAnyOperationsAborted != 0 {
+        Err("cancelled".into())
+    } else if code != 0 {
+        Err(format!("error {code:#x}"))
+    } else {
+        Ok(())
+    }
+}
+
 /// Show the standard Explorer "Properties" dialog for a file, folder or drive.
 /// The dialog runs on its own thread; this returns immediately.
 pub fn show_properties(path: &str) -> bool {

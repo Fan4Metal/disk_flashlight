@@ -10,6 +10,7 @@ use crate::layout::{self, Layout, LayoutParams, Sector};
 use crate::model::{Metric, Model};
 use crate::render::{self, Palette};
 use crate::scan::win::DiskSpace;
+use crate::ui::{ItemCommand, item_menu};
 
 /// Approximate extent of the standard Windows arrow cursor below and to the
 /// right of its hot spot, in points (it scales with DPI like the UI does).
@@ -25,8 +26,7 @@ pub enum ChartAction {
     None,
     Navigate(u32),
     Up,
-    OpenInExplorer(u32),
-    Properties(u32),
+    Command(ItemCommand),
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -86,6 +86,8 @@ impl ChartView {
         self.layout = None;
         self.mesh = None;
         self.menu_node = None;
+        // Ids of the old model; the next frame sets it again.
+        self.hovered = None;
     }
 
     pub fn reset_view(&mut self) {
@@ -294,13 +296,8 @@ impl ChartView {
             // Popup::context_menu opens on this frame's secondary click and
             // returns None once the menu has been closed.
             let shown = response.context_menu(|ui| {
-                if ui.button("Open in Explorer").clicked() {
-                    action = ChartAction::OpenInExplorer(node);
-                    ui.close();
-                }
-                if ui.button("Properties").clicked() {
-                    action = ChartAction::Properties(node);
-                    ui.close();
+                if let Some(c) = item_menu(ui, node) {
+                    action = ChartAction::Command(c);
                 }
             });
             if shown.is_none() {

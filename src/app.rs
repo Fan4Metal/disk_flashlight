@@ -6,13 +6,14 @@ use std::time::Duration;
 
 use egui::{Key, Modifiers};
 
+use crate::format::{human_size, thousands};
 use crate::history::History;
 use crate::model::{Metric, Model, NO_NODE};
 use crate::scan::win::{DiskSpace, Drive};
 use crate::scan::{self, Method, ScanHandle};
 use crate::settings::Settings;
 use crate::ui::about::AboutDialog;
-use crate::ui::SideView;
+use crate::ui::{DANGER, ItemCommand, SideView};
 use crate::ui::chart::{ChartAction, ChartView};
 use crate::ui::files::FilesView;
 use crate::ui::search::SearchView;
@@ -43,6 +44,20 @@ pub struct App {
     /// Capacity and free space when the scan covers a whole volume (or
     /// network share), for the free-space sector.
     pub disk: Option<DiskSpace>,
+    /// Item waiting for the user to confirm its deletion, in that model.
+    confirm_delete: Option<(Arc<Model>, u32)>,
+    /// Deletion running on a background thread.
+    deleting: Option<Deleting>,
+}
+
+/// A move to the Recycle Bin in progress.
+struct Deleting {
+    /// Model the item belongs to; if another replaced it meanwhile (a
+    /// rescan), it is not edited.
+    model: Arc<Model>,
+    id: u32,
+    path: String,
+    rx: crossbeam_channel::Receiver<Result<(), String>>,
 }
 
 impl App {
@@ -88,6 +103,8 @@ impl App {
             status: "Ready".into(),
             elevated: scan::win::is_elevated(),
             disk: None,
+            confirm_delete: None,
+            deleting: None,
         };
         app.chart.palette.mode = settings.color_mode;
         app.tree.follow_hover = settings.follow_in_tree;
@@ -158,33 +175,141 @@ impl App {
                 // Reflect the scanned volume in the drive picker; a folder
                 // scan shows no drive there.
                 self.drive = drive_root_of(&model.root_path);
-                // A rescan of the same path keeps the current folder (or its
-                // closest surviving ancestor) and the history; anything else
-                // starts at the root.
-                match self.model.take() {
-                    Some(old) if old.root_path.eq_ignore_ascii_case(&model.root_path) => {
-                        self.nav.remap(|id| model.find_dir(&old.rel_path(id)));
-                    }
-                    _ => self.nav.reset(),
-                }
-                self.tree.reset();
-                self.files.reset();
-                self.search.reset();
-                self.tree.reveal(&model, self.nav.root);
-                let root = std::path::Path::new(&model.root_path);
-                self.disk = if root.parent().is_none() {
-                    scan::win::disk_space(root)
-                } else {
-                    None
-                };
-                self.model = Some(Arc::new(model));
-                self.chart.invalidate();
+                self.set_model(model);
                 self.scan = None;
             }
             Some(Err(e)) => {
                 self.status = format!("Scan failed: {e}");
                 self.scan = None;
             }
+        }
+    }
+
+    /// Show `model`, a new scan or an edited copy of the current one. The
+    /// same path keeps the current folder (or its closest surviving
+    /// ancestor) and the history; anything else starts at the root.
+    fn set_model(&mut self, model: Model) {
+        match self.model.take() {
+            Some(old) if old.root_path.eq_ignore_ascii_case(&model.root_path) => {
+                self.nav.remap(|id| model.find_dir(&old.rel_path(id)));
+            }
+            _ => self.nav.reset(),
+        }
+        self.tree.reset();
+        self.files.reset();
+        self.search.reset();
+        self.tree.reveal(&model, self.nav.root);
+        self.tree_hovered = None;
+        let root = std::path::Path::new(&model.root_path);
+        self.disk = if root.parent().is_none() {
+            scan::win::disk_space(root)
+        } else {
+            None
+        };
+        self.model = Some(Arc::new(model));
+        self.chart.invalidate();
+    }
+
+    /// Carry out a context-menu command on an item of the current model.
+    fn run_command(&mut self, command: ItemCommand) {
+        let Some(model) = self.model.clone() else { return };
+        match command {
+            ItemCommand::OpenInExplorer(id) => {
+                scan::win::open_in_explorer(&model.path(id), model.node(id).is_dir);
+            }
+            ItemCommand::Properties(id) => {
+                let path = model.path(id);
+                if !scan::win::show_properties(&path) {
+                    self.status = format!("No properties available for {path}");
+                }
+            }
+            ItemCommand::Delete(id) if id != 0 => {
+                if self.deleting.is_some() {
+                    self.status = "Another deletion is still running".into();
+                } else {
+                    self.confirm_delete = Some((model, id));
+                }
+            }
+            ItemCommand::Delete(_) => {}
+        }
+    }
+
+    /// The confirmation dialog for `confirm_delete`; on "Move to Recycle
+    /// Bin" the deletion starts on a background thread.
+    fn show_confirm_delete(&mut self, ctx: &egui::Context) {
+        let Some((model, id)) = self.confirm_delete.clone() else { return };
+        let n = model.node(id);
+        let (mut confirm, mut cancel) = (false, false);
+        let modal = egui::Modal::new(egui::Id::new("confirm_delete")).show(ctx, |ui| {
+            ui.set_width(420.0);
+            ui.heading("Move to the Recycle Bin?");
+            ui.add_space(6.0);
+            ui.strong(format!("{}{}", model.name(id), if n.is_dir { "\\" } else { "" }));
+            ui.label(if n.is_dir {
+                format!(
+                    "{} in {} files and {} folders",
+                    human_size(n.size),
+                    thousands(n.files as u64),
+                    thousands(n.dirs as u64)
+                )
+            } else {
+                human_size(n.size)
+            });
+            ui.add(egui::Label::new(egui::RichText::new(model.path(id)).weak()).wrap());
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 10.0;
+                let text = |s: &str| egui::RichText::new(s).size(16.0);
+                let delete = egui::Button::new(text("Move to Recycle Bin").color(egui::Color32::WHITE))
+                    .fill(DANGER)
+                    .min_size(egui::vec2(180.0, 34.0));
+                confirm = ui.add(delete).clicked();
+                cancel = ui
+                    .add(egui::Button::new(text("Cancel")).min_size(egui::vec2(100.0, 34.0)))
+                    .clicked();
+            });
+        });
+        if cancel || modal.should_close() {
+            self.confirm_delete = None;
+        } else if confirm {
+            self.confirm_delete = None;
+            // A rescan may have replaced the model while the dialog was open.
+            if self.model.as_ref().is_some_and(|m| Arc::ptr_eq(m, &model)) {
+                self.start_delete(model, id, ctx);
+            }
+        }
+    }
+
+    fn start_delete(&mut self, model: Arc<Model>, id: u32, ctx: &egui::Context) {
+        let path = model.path(id);
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        let (p, ctx) = (path.clone(), ctx.clone());
+        let spawned = std::thread::Builder::new().name("recycle".into()).spawn(move || {
+            let _ = tx.send(scan::win::recycle(&p));
+            ctx.request_repaint();
+        });
+        if let Err(e) = spawned {
+            self.status = format!("Could not start deleting: {e}");
+            return;
+        }
+        self.status = format!("Moving {path} to the Recycle Bin…");
+        self.deleting = Some(Deleting { model, id, path, rx });
+    }
+
+    /// Finish a deletion: what is gone from disk leaves the model too.
+    fn poll_delete(&mut self) {
+        let Some(d) = &self.deleting else { return };
+        let Ok(result) = d.rx.try_recv() else { return };
+        let Some(d) = self.deleting.take() else { return };
+        let gone = std::fs::symlink_metadata(&d.path).is_err();
+        let size = human_size(d.model.node(d.id).metric(self.metric));
+        self.status = match (gone, result) {
+            (true, _) => format!("Moved {} ({size}) to the Recycle Bin", d.path),
+            (false, Err(e)) => format!("{} was not deleted: {e}", d.path),
+            (false, Ok(())) => format!("{} was not deleted completely; rescan to update", d.path),
+        };
+        if gone && self.model.as_ref().is_some_and(|m| Arc::ptr_eq(m, &d.model)) {
+            self.set_model(d.model.without(d.id));
         }
     }
 
@@ -317,7 +442,9 @@ impl eframe::App for App {
         let ctx = root_ui.ctx().clone();
         self.poll_drives();
         self.poll_scan(&ctx);
-        if !self.about.open {
+        self.poll_delete();
+        self.show_confirm_delete(&ctx);
+        if !self.about.open && self.confirm_delete.is_none() {
             self.handle_keys(&ctx);
         }
         self.about.show(&ctx);
@@ -373,6 +500,9 @@ impl eframe::App for App {
             if let Some(id) = a.selected {
                 self.navigate(id);
             }
+            if let Some(c) = a.command {
+                self.run_command(c);
+            }
         }
 
         let mut chart_action = ChartAction::None;
@@ -393,16 +523,7 @@ impl eframe::App for App {
             ChartAction::None => {}
             ChartAction::Navigate(id) => self.navigate(id),
             ChartAction::Up => self.go_up(),
-            ChartAction::OpenInExplorer(id) => {
-                let path = model.path(id);
-                scan::win::open_in_explorer(&path, model.node(id).is_dir);
-            }
-            ChartAction::Properties(id) => {
-                let path = model.path(id);
-                if !scan::win::show_properties(&path) {
-                    self.status = format!("No properties available for {path}");
-                }
-            }
+            ChartAction::Command(c) => self.run_command(c),
         }
     }
 }

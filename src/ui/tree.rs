@@ -6,6 +6,7 @@ use egui::{Align, Layout, ScrollArea, Ui};
 
 use crate::format::human_size;
 use crate::model::{Metric, Model, NO_NODE};
+use crate::ui::{ItemCommand, item_menu};
 
 const ROW_HEIGHT: f32 = 20.0;
 const INDENT: f32 = 14.0;
@@ -45,6 +46,8 @@ fn arrow(ui: &mut Ui, expanded: bool) -> egui::Response {
 pub struct TreeAction {
     pub selected: Option<u32>,
     pub hovered: Option<u32>,
+    /// Chosen in an item's context menu.
+    pub command: Option<ItemCommand>,
 }
 
 pub struct TreeView {
@@ -257,6 +260,11 @@ impl TreeView {
                     if label.hovered() {
                         action.hovered = Some(id);
                     }
+                    label.context_menu(|ui| {
+                        if let Some(c) = item_menu(ui, id) {
+                            action.command = Some(c);
+                        }
+                    });
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.weak(human_size(node.metric(metric)));
                     });

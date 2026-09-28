@@ -6,6 +6,7 @@ use egui::{Align, Layout, RichText, ScrollArea, Ui};
 
 use crate::format::human_size;
 use crate::model::{Metric, Model, NO_NODE};
+use crate::ui::item_menu;
 use crate::ui::tree::TreeAction;
 
 /// Number of files listed.
@@ -73,6 +74,11 @@ impl FilesView {
                 if row.hovered() {
                     action.hovered = Some(id);
                 }
+                row.context_menu(|ui| {
+                    if let Some(c) = item_menu(ui, id) {
+                        action.command = Some(c);
+                    }
+                });
             }
         });
         action
