@@ -27,6 +27,10 @@ pub struct SearchView {
     count: usize,
     /// Size of all matches, each byte once.
     total: u64,
+    /// Matching bytes per node, for colouring the chart.
+    hits: Vec<u64>,
+    /// Bumped whenever `hits` changes; never 0 once searched.
+    generation: u64,
     /// Largest first: item id and its folder relative to the scan root.
     rows: Vec<(u32, String)>,
     selected: Option<u32>,
@@ -39,8 +43,15 @@ impl SearchView {
         *self = Self {
             query: std::mem::take(&mut self.query),
             whole_word: self.whole_word,
+            generation: self.generation,
             ..Self::default()
         };
+    }
+
+    /// Matches to colour in on the chart, with their generation: while
+    /// there are any.
+    pub fn highlight(&self) -> Option<(u64, &[u64])> {
+        (self.count > 0 && !self.query.trim().is_empty()).then_some((self.generation, &self.hits[..]))
     }
 
     /// A click on a folder navigates to it, on a file to its folder.
@@ -97,7 +108,8 @@ impl SearchView {
             .is_none_or(|(q, m, w)| *q != self.query || *m != metric || *w != self.whole_word);
         if stale {
             let found = model.search(0, self.query.trim(), metric, LIMIT, self.whole_word);
-            (self.count, self.total) = (found.count, found.total);
+            (self.count, self.total, self.hits) = (found.count, found.total, found.hits);
+            self.generation += 1;
             self.rows = found.ids.into_iter().map(|id| (id, folder_under(model, 0, id))).collect();
             self.key = Some((self.query.clone(), metric, self.whole_word));
         }

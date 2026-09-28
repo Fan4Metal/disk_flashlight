@@ -49,6 +49,14 @@ pub struct Palette {
     pub sat_group: f32,
     /// Free space of a drive: a pale cool grey, apart from the warm palette.
     pub free: Color32,
+    // --- Search highlight ---
+    /// Colour that sectors without matches fade towards.
+    pub dimmed: Color32,
+    /// How far sectors without matches fade (0 = not at all, 1 = fully).
+    pub dim: f32,
+    /// How much colour a folder with a sliver of matches gets back, so that
+    /// it stands apart from folders without any.
+    pub partial_min: f32,
 }
 
 impl Default for Palette {
@@ -65,6 +73,9 @@ impl Default for Palette {
             fade_max: 0.6,
             sat_group: 0.22,
             free: Color32::from_rgb(218, 228, 238),
+            dimmed: Color32::from_gray(246),
+            dim: 0.93,
+            partial_min: 0.3,
         }
     }
 }
@@ -112,6 +123,19 @@ impl Palette {
             0.0
         };
         Color32::from(Hsva::new(hue / 360.0, self.sat_group * (1.0 - fade), self.val_odd, 1.0))
+    }
+
+    /// `color` of a sector while search matches are highlighted; `share` is
+    /// the part of it (by size) that matches. Matches keep their colour,
+    /// sectors without any fade, and folders holding some are in between.
+    pub fn highlight(&self, color: Color32, share: f32) -> Color32 {
+        let faded = color.lerp_to_gamma(self.dimmed, self.dim);
+        if share <= 0.0 {
+            faded
+        } else {
+            let t = self.partial_min + (1.0 - self.partial_min) * share.min(1.0);
+            faded.lerp_to_gamma(color, t)
+        }
     }
 }
 
@@ -170,8 +194,32 @@ fn visible_pieces(layout: &Layout, a0: f32, a1: f32, r: f32) -> impl Iterator<It
     layout.view.clip(a0, a1, margin).into_iter().flatten()
 }
 
+/// Part of sector `s` (by size) covered by search matches, from
+/// [`crate::model::Found::hits`].
+pub fn match_share(model: &Model, layout: &Layout, s: &Sector, hits: &[u64]) -> f32 {
+    let (hit, size) = if s.is_free() {
+        (0, 0)
+    } else if s.is_group() {
+        let hit = model
+            .children(s.node)
+            .filter(|&c| s.group_has(model, layout.metric, c))
+            .map(|c| hits[c as usize])
+            .sum();
+        (hit, s.group_size)
+    } else {
+        (hits[s.node as usize], model.node(s.node).metric(layout.metric))
+    };
+    if size == 0 {
+        0.0
+    } else {
+        (hit as f64 / size as f64) as f32
+    }
+}
+
 /// Build the full chart mesh. One draw call regardless of sector count.
-pub fn build_mesh(model: &Model, layout: &Layout, palette: &Palette) -> Mesh {
+/// With `hits` (search matches), sectors are coloured by how much of them
+/// matches ([`Palette::highlight`]).
+pub fn build_mesh(model: &Model, layout: &Layout, palette: &Palette, hits: Option<&[u64]>) -> Mesh {
     let mut mesh = Mesh::default();
     let approx_vertices: usize = layout
         .rings
@@ -190,6 +238,10 @@ pub fn build_mesh(model: &Model, layout: &Layout, palette: &Palette) -> Mesh {
                 palette.group_color(ring, n_rings)
             } else {
                 palette.color(ring, i, n_rings, s.rel, model.node(s.node).is_dir)
+            };
+            let color = match hits {
+                Some(hits) => palette.highlight(color, match_share(model, layout, s, hits)),
+                None => color,
             };
             let (a0, a1) = with_gap(s, r_out);
             for (p0, p1) in visible_pieces(layout, a0, a1, r_out) {
@@ -285,6 +337,16 @@ mod tests {
         assert!(g_out > g_in && b_out > b_in, "outer ring should be paler");
         // Neighbours of equal size get the same colour (no alternation).
         assert_eq!(p.color(1, 0, 4, 0.5, true), p.color(1, 1, 4, 0.5, true));
+    }
+
+    #[test]
+    fn highlight_fades_by_matching_share() {
+        let p = Palette::default();
+        let c = p.color(0, 0, 3, 1.0, true);
+        assert_eq!(p.highlight(c, 1.0), c);
+        let (none, some, most) = (p.highlight(c, 0.0), p.highlight(c, 0.01), p.highlight(c, 0.8));
+        // Red fading towards grey gains green: the less matches, the paler.
+        assert!(none.g() > some.g() + 10 && some.g() > most.g() && most.g() > c.g());
     }
 
     #[test]

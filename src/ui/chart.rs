@@ -37,6 +37,8 @@ struct CacheKey {
     radius: i32,
     view: (i32, i32, i32, i32),
     free: u64,
+    /// Generation of the search matches coloured in, 0 for none.
+    hits: u64,
 }
 
 pub struct ChartView {
@@ -104,6 +106,7 @@ impl ChartView {
         self.pan = self.pan.clamp(-lim, lim);
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn show(
         &mut self,
         ui: &mut Ui,
@@ -112,6 +115,7 @@ impl ChartView {
         metric: Metric,
         external_highlight: Option<u32>,
         disk: Option<DiskSpace>,
+        hits: Option<(u64, &[u64])>,
     ) -> ChartAction {
         let size = ui.available_size();
         let (response, painter) = ui.allocate_painter(size, Sense::click_and_drag());
@@ -155,6 +159,7 @@ impl ChartView {
                 rect.max.y as i32,
             ),
             free: disk.map_or(0, |d| d.free),
+            hits: hits.map_or(0, |(generation, _)| generation),
         };
         if self.key != Some(key) || self.layout.is_none() {
             let l = layout::build_with_free(
@@ -167,7 +172,7 @@ impl ChartView {
                 &self.params,
                 key.free,
             );
-            let m = render::build_mesh(model, &l, &self.palette);
+            let m = render::build_mesh(model, &l, &self.palette, hits.map(|(_, h)| h));
             self.layout = Some(l);
             self.mesh = Some(Arc::new(m));
             self.key = Some(key);
@@ -321,6 +326,7 @@ impl ChartView {
                 } else if s.is_group() {
                     ui.strong(format!("{} smaller items", thousands(s.count as u64)));
                     ui.label(human_size(s.group_size));
+                    matches_line(ui, model, layout, &s, hits);
                     ui.weak(format!("in {}", model.path(s.node)));
                     ui.weak("Click or scroll to zoom in");
                 } else {
@@ -335,6 +341,7 @@ impl ChartView {
                         ui.label(format!("Dirs: {}", thousands(n.dirs as u64)));
                         ui.label(format!("Files: {}", thousands(n.files as u64)));
                     }
+                    matches_line(ui, model, layout, &s, hits);
                     ui.weak(model.path(s.node));
                 }
             });
@@ -345,5 +352,20 @@ impl ChartView {
             ui.ctx().request_repaint();
         }
         action
+    }
+}
+
+/// Tooltip line with how much of sector `s` the search matches, while they
+/// are coloured in.
+fn matches_line(ui: &mut Ui, model: &Model, layout: &Layout, s: &Sector, hits: Option<(u64, &[u64])>) {
+    if let Some((_, hits)) = hits {
+        let share = render::match_share(model, layout, s, hits);
+        let size = if s.is_group() {
+            s.group_size
+        } else {
+            model.node(s.node).metric(layout.metric)
+        };
+        let bytes = (share as f64 * size as f64).round() as u64;
+        ui.label(format!("Search matches: {} ({:.0}%)", human_size(bytes), share * 100.0));
     }
 }

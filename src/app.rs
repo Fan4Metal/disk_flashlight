@@ -381,6 +381,7 @@ impl eframe::App for App {
                     self.metric,
                     self.tree_hovered,
                     self.disk.filter(|_| self.nav.root == 0),
+                    self.search.highlight().filter(|_| self.side == SideView::Search),
                 );
         });
         match chart_action {

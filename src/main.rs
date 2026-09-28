@@ -211,7 +211,7 @@ fn bench(path: PathBuf, allow_mft: bool) -> anyhow::Result<()> {
     let l = layout::build(&model, 0, model::Metric::Physical, center, 380.0, view, &params);
     let layout_time = t.elapsed();
     let t = Instant::now();
-    let mesh = render::build_mesh(&model, &l, &render::Palette::default());
+    let mesh = render::build_mesh(&model, &l, &render::Palette::default(), None);
     let mesh_time = t.elapsed();
     println!(
         "layout:    {:.2}ms  ({} sectors)",
@@ -232,7 +232,7 @@ fn bench(path: PathBuf, allow_mft: bool) -> anyhow::Result<()> {
         let c = egui::Pos2::new(600.0, 400.0 + radius * 0.45);
         let t = Instant::now();
         let l = layout::build(&model, 0, model::Metric::Physical, c, radius, view, &params);
-        let mesh = render::build_mesh(&model, &l, &render::Palette::default());
+        let mesh = render::build_mesh(&model, &l, &render::Palette::default(), None);
         println!(
             "zoom {zoom:>3}: {:.2}ms  ({} sectors, {} vertices)",
             t.elapsed().as_secs_f64() * 1e3,
@@ -271,6 +271,15 @@ fn bench(path: PathBuf, allow_mft: bool) -> anyhow::Result<()> {
             thousands(count as u64)
         );
     }
+    // The chart with the matches of a search coloured in.
+    let found = model.search(0, "d", model::Metric::Physical, 200, false);
+    let t = Instant::now();
+    let mesh = render::build_mesh(&model, &l, &render::Palette::default(), Some(&found.hits));
+    println!(
+        "mesh with matches: {:.2}ms  ({} vertices)",
+        t.elapsed().as_secs_f64() * 1e3,
+        thousands(mesh.vertices.len() as u64)
+    );
     Ok(())
 }
 

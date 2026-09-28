@@ -31,6 +31,9 @@ pub struct Sector {
     /// Total size (in the layout metric) of the merged items of a group, or
     /// the free bytes of the free-space sector.
     pub group_size: u64,
+    /// For a group, its first (largest) merged item; see
+    /// [`Sector::group_has`]. `NO_NODE` otherwise.
+    pub first: u32,
 }
 
 impl Sector {
@@ -49,6 +52,14 @@ impl Sector {
     #[inline]
     pub fn is_item(&self) -> bool {
         !self.is_group() && !self.is_free()
+    }
+
+    /// Whether `child` of a group's directory is one of the group's items:
+    /// the group holds `first` and every child after it in layout order,
+    /// which is by size descending, then by id.
+    pub fn group_has(&self, model: &Model, metric: Metric, child: u32) -> bool {
+        let (m, f) = (model.node(child).metric(metric), model.node(self.first).metric(metric));
+        m < f || m == f && child >= self.first
     }
 }
 
@@ -297,6 +308,7 @@ pub fn build_with_free(
             rel: 0.0,
             count: 0,
             group_size: free,
+            first: NO_NODE,
         });
     }
     for (ring, sectors) in layout.rings.iter().enumerate() {
@@ -328,13 +340,14 @@ fn place(
     }
     let range = model.children(node);
     let n = range.len();
-    // Children are stored sorted by logical size; for the physical metric the
-    // order can differ slightly, so sort a copy.
+    // Children are stored sorted by logical size (ties by id); for the
+    // physical metric the order can differ slightly, so sort a copy the same
+    // way, which `Sector::group_has` relies on.
     let pending = if metric == Metric::Logical {
         emit(model, layout, params, node, range, n, total, a0, a1, ring)
     } else {
         let mut sorted: Vec<u32> = range.collect();
-        sorted.sort_unstable_by_key(|&c| std::cmp::Reverse(model.node(c).alloc));
+        sorted.sort_unstable_by_key(|&c| (std::cmp::Reverse(model.node(c).alloc), c));
         emit(model, layout, params, node, sorted.into_iter(), n, total, a0, a1, ring)
     };
     for (c, ca0, ca1) in pending {
@@ -381,6 +394,7 @@ fn emit(
                 rel: (m as f64 / largest as f64) as f32,
                 count: 0,
                 group_size: 0,
+                first: NO_NODE,
             });
         }
         // Deeper rings can be on screen even when this one is not.
@@ -414,6 +428,7 @@ fn emit(
                     rel: 0.0,
                     count,
                     group_size: rest,
+                    first: c,
                 });
             }
             break;
@@ -503,6 +518,31 @@ mod tests {
         let big = build(&m, 0, Metric::Logical, Pos2::ZERO, 60_000.0, everything(), &p);
         assert_eq!(big.rings[0].len(), 201);
         assert!(big.rings[0].iter().all(|s| !s.is_group()));
+    }
+
+    /// `group_has` picks exactly the merged items, for both metrics, with
+    /// ties and a physical order unlike the logical one.
+    #[test]
+    fn group_has_matches_the_merged_items() {
+        let mut files = vec![RawFile { name: "big".into(), size: 1_000_000, alloc: 1_000_000 }];
+        files.extend((0..300u64).map(|i| RawFile {
+            name: format!("t{i}"),
+            size: 40 + i % 7 * 20,
+            alloc: 200 - i % 5 * 40,
+        }));
+        files.extend((0..20u64).map(|i| RawFile { name: format!("m{i}"), size: 5_000, alloc: 3_000 + i % 3 * 1_000 }));
+        let m = model(files);
+        let p = LayoutParams::default();
+        for metric in [Metric::Logical, Metric::Physical] {
+            let l = build(&m, 0, metric, Pos2::ZERO, 400.0, everything(), &p);
+            let g = *l.rings[0].iter().find(|s| s.is_group()).expect("a group");
+            let items: Vec<u32> = m.children(0).filter(|&c| g.group_has(&m, metric, c)).collect();
+            assert_eq!(items.len(), g.count as usize, "{metric:?}");
+            let size: u64 = items.iter().map(|&c| m.node(c).metric(metric)).sum();
+            assert_eq!(size, g.group_size, "{metric:?}");
+            // Nothing drawn on its own belongs to the group.
+            assert!(l.rings[0].iter().filter(|s| s.is_item()).all(|s| !g.group_has(&m, metric, s.node)));
+        }
     }
 
     /// Free space takes its share of ring 0 after the children and is

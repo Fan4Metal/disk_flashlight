@@ -372,17 +372,27 @@ impl Model {
     fn find(&self, root: u32, metric: Metric, limit: usize, mut matches: impl FnMut(&str) -> bool) -> Found {
         let mut best = TopN::new(limit);
         let (mut count, mut total) = (0, 0);
+        let mut hits = vec![0u64; self.nodes.len()];
         // A folder is pushed with whether it or one of its ancestors matched.
         let mut stack = vec![(root, false)];
         while let Some((dir, inside)) = stack.pop() {
             for c in self.children(dir) {
                 let n = self.node(c);
+                let m = n.metric(metric);
                 let hit = matches(self.name(c));
+                if hit || inside {
+                    hits[c as usize] = m;
+                }
                 if hit {
                     count += 1;
-                    best.push(n.metric(metric), c);
+                    best.push(m, c);
                     if !inside {
-                        total += n.metric(metric);
+                        total += m;
+                        let mut p = n.parent;
+                        while p != NO_NODE {
+                            hits[p as usize] += m;
+                            p = self.node(p).parent;
+                        }
                     }
                 }
                 if n.is_dir {
@@ -394,6 +404,7 @@ impl Model {
             count,
             total,
             ids: best.into_ids(),
+            hits,
         }
     }
 }
@@ -408,6 +419,10 @@ pub struct Found {
     pub total: u64,
     /// The largest matches, largest first.
     pub ids: Vec<u32>,
+    /// Per node: bytes of it that match, each once. A match and everything
+    /// inside it have their whole size, a folder above matches the sum of
+    /// those below it, anything else 0 (empty when the query is).
+    pub hits: Vec<u64>,
 }
 
 /// Whether `text` matches the mask `pat` as a whole, where `*` stands for
@@ -589,7 +604,14 @@ mod tests {
         // the total does not count twice.
         let f = m.search(0, "отчё", Metric::Logical, 10, false);
         assert_eq!((f.count, f.total), (2, 100));
+        let sub = m.find_dir(&["Отчёты"]);
+        // Everything in the matching folder is covered, the root partly.
+        assert_eq!(f.hits[0], 100);
+        assert!(m.children(sub).all(|c| f.hits[c as usize] == m.node(c).size));
         assert_eq!(names(f.ids), ["Отчёты", "ОТЧЁТ.docx"]);
+
+        let f = m.search(0, "REPORT", Metric::Logical, 10, false);
+        assert_eq!((f.hits[0], f.hits[sub as usize]), (120, 70));
 
         // The limit keeps the largest, the count and total stay complete.
         let f = m.search(0, ".", Metric::Logical, 2, false);
