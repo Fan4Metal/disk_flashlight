@@ -73,7 +73,7 @@ The `--mft` option requests administrator rights only where they speed up the sc
 
 The version is shown in the window title.
 
-Keyboard shortcuts: `Backspace` goes up, `Alt+Left` and `Alt+Right` move through history, `F5` rescans, `Ctrl+F` opens the search, `F1` opens the **About** window (also available from the toolbar). A rescan keeps the current folder and the navigation history; if the folder no longer exists, the view moves to its closest remaining parent. The mouse wheel zooms the chart towards the cursor; dragging with the middle mouse button pans it, and a middle-button double click restores the initial view.
+Keyboard shortcuts: `Backspace` goes up, `Alt+Left` and `Alt+Right` move through history, `F5` rescans, `Ctrl+F` opens the search, `F1` opens the **About** window (also available from the toolbar). A rescan keeps the current folder and the navigation history; if the folder no longer exists, the view moves to its closest remaining parent. The mouse wheel zooms the chart towards the cursor; dragging with the middle mouse button pans it, and a middle-button double click or the small button with the zoom factor in the top right corner of the chart (shown while zoomed or panned) restores the initial view.
 
 ## Project layout
 

@@ -3,7 +3,10 @@
 
 use std::sync::Arc;
 
-use egui::{Align2, Color32, FontId, Mesh, PointerButton, Pos2, Rect, Sense, Shape, Stroke, Ui, Vec2};
+use egui::{
+    Align2, Color32, CursorIcon, FontId, Mesh, PointerButton, Pos2, Rect, Response, Sense, Shape, Stroke,
+    StrokeKind, Ui, Vec2, pos2, vec2,
+};
 
 use crate::format::{human_size, thousands};
 use crate::layout::{self, Layout, LayoutParams, Sector};
@@ -221,9 +224,14 @@ impl ChartView {
             Color32::from_gray(235),
         );
 
+        // "Reset view" button in the corner, while zoomed or panned; the
+        // chart underneath gets neither its hover nor its clicks.
+        let reset = (self.zoom != 1.0 || self.pan != Vec2::ZERO).then(|| reset_button(ui, rect, self.zoom));
+        let on_reset = reset.as_ref().is_some_and(|r| r.contains_pointer());
+
         // Hover / highlight.
         let panning = response.dragged_by(PointerButton::Middle);
-        let pointer = response.hover_pos().filter(|_| !panning);
+        let pointer = response.hover_pos().filter(|_| !panning && !on_reset);
         // While a context menu is open its sector stays highlighted and the
         // tooltip is hidden, so the highlight shows what the menu acts on.
         let hit = match self.menu_node {
@@ -352,8 +360,48 @@ impl ChartView {
             self.zoom_at(rect, p, GROUP_CLICK_ZOOM);
             ui.ctx().request_repaint();
         }
+        if reset.is_some_and(|r| r.clicked()) {
+            self.reset_view();
+            ui.ctx().request_repaint();
+        }
         action
     }
+}
+
+/// Small button in the top right corner of the chart `rect`: a "fit" icon
+/// (four corners) and the current `zoom` factor.
+fn reset_button(ui: &mut Ui, rect: Rect, zoom: f32) -> Response {
+    let size = vec2(64.0, 24.0);
+    let btn = Rect::from_min_size(pos2(rect.right() - size.x - 8.0, rect.top() + 8.0), size);
+    let resp = ui
+        .interact(btn, ui.id().with("reset_view"), Sense::click())
+        .on_hover_cursor(CursorIcon::PointingHand)
+        .on_hover_text("Reset the view (or double-click with the middle mouse button)");
+    let visuals = ui.style().interact(&resp);
+    let painter = ui.painter().with_clip_rect(rect);
+    painter.rect(btn, 4.0, visuals.weak_bg_fill, visuals.bg_stroke, StrokeKind::Inside);
+    let (color, c) = (visuals.text_color(), pos2(btn.left() + 14.0, btn.center().y));
+    let (half, arm) = (5.5, 3.5);
+    for (sx, sy) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+        let corner = c + vec2(sx * half, sy * half);
+        painter.line(
+            vec![corner - vec2(sx * arm, 0.0), corner, corner - vec2(0.0, sy * arm)],
+            Stroke::new(1.5, color),
+        );
+    }
+    let label = if zoom >= 10.0 {
+        format!("{zoom:.0}×")
+    } else {
+        format!("{zoom:.1}×")
+    };
+    painter.text(
+        pos2(btn.left() + 26.0, btn.center().y),
+        Align2::LEFT_CENTER,
+        label,
+        FontId::proportional(13.0),
+        color,
+    );
+    resp
 }
 
 /// Tooltip line with how much of sector `s` the search matches, while they
