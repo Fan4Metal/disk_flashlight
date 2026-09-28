@@ -11,6 +11,9 @@ const ROW_HEIGHT: f32 = 20.0;
 #[derive(Default)]
 pub struct ErrorsView {
     pub open: bool,
+    /// Set when the window opens: place it in the middle of the app window
+    /// instead of where egui remembers it.
+    center: bool,
     /// All errors of the scan; `list` holds at most `MAX_KEPT_ERRORS`.
     count: u64,
     /// Sorted by path.
@@ -23,6 +26,7 @@ impl ErrorsView {
         list.sort_by(|a, b| a.path.cmp(&b.path));
         *self = Self {
             open: false,
+            center: false,
             count,
             list,
         };
@@ -41,20 +45,31 @@ impl ErrorsView {
             .clicked()
         {
             self.open = true;
+            self.center = true;
         }
     }
 
     /// The window; `elevated` says whether a hint about Fast scan helps.
     pub fn show(&mut self, ctx: &egui::Context, elevated: bool) {
+        if !self.open {
+            return;
+        }
         let mut open = self.open;
+        let center = ctx.content_rect().center();
         // The title carries the count; a fixed id keeps it one window.
-        egui::Window::new(format!("Access errors ({})", thousands(self.count)))
+        let mut window = egui::Window::new(format!("Access errors ({})", thousands(self.count)))
             .id(egui::Id::new("access_errors"))
             .open(&mut open)
             .default_size([640.0, 420.0])
             .pivot(egui::Align2::CENTER_CENTER)
-            .default_pos(ctx.content_rect().center())
-            .collapsible(false)
+            .default_pos(center)
+            .collapsible(false);
+        // egui keeps the position of a closed window (across restarts too),
+        // so every opening moves it back to the middle; it stays movable.
+        if std::mem::take(&mut self.center) {
+            window = window.current_pos(center);
+        }
+        window
             .show(ctx, |ui| {
                 ui.label(match self.count {
                     1 => "1 folder could not be read, so its contents are missing from the chart."
