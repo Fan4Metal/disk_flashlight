@@ -48,6 +48,10 @@ pub struct App {
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, initial: Option<PathBuf>) -> Self {
         cc.egui_ctx.set_visuals(egui::Visuals::light());
+        // Solid scroll bars take their own width; the default floating ones
+        // are drawn over the right edge of list rows (sizes).
+        cc.egui_ctx
+            .all_styles_mut(|s| s.spacing.scroll = egui::style::ScrollStyle::solid());
         let settings = cc.storage.map(Settings::load).unwrap_or_default();
         let (tx, drive_rx) = crossbeam_channel::unbounded();
         for root in scan::win::drive_roots() {
