@@ -34,6 +34,9 @@ pub struct Sector {
     /// For a group, its first (largest) merged item; see
     /// [`Sector::group_has`]. `NO_NODE` otherwise.
     pub first: u32,
+    /// A single file (drawn apart from its folder, see
+    /// [`Layout::sector_radii`]).
+    pub is_file: bool,
 }
 
 impl Sector {
@@ -75,6 +78,11 @@ pub struct LayoutParams {
     pub center_frac: f32,
     /// Each ring is this much thinner than the previous one.
     pub ring_shrink: f32,
+    /// Files are drawn this part of the ring's thickness away from their
+    /// folder (but at least `file_inset_min_px`, at most half the ring),
+    /// so that they read as files, as in OverDisk.
+    pub file_inset: f32,
+    pub file_inset_min_px: f32,
 }
 
 impl Default for LayoutParams {
@@ -85,6 +93,8 @@ impl Default for LayoutParams {
             min_arc_px: 1.0,
             center_frac: 0.24,
             ring_shrink: 0.78,
+            file_inset: 0.3,
+            file_inset_min_px: 2.0,
         }
     }
 }
@@ -194,9 +204,24 @@ pub struct Layout {
     pub index: HashMap<u32, (usize, usize)>,
     /// What part of the chart is on screen; used for culling and clipping.
     pub view: ViewBounds,
+    /// `(file_inset, file_inset_min_px)` of the parameters.
+    file_inset: (f32, f32),
 }
 
 impl Layout {
+    /// Radii that sector `s` of `ring` is drawn with: a file starts further
+    /// out than its ring, leaving a gap to its folder. Hit testing still
+    /// uses the whole ring, which makes thin files easier to point at.
+    pub fn sector_radii(&self, ring: usize, s: &Sector) -> (f32, f32) {
+        let (r_in, r_out) = self.radii[ring];
+        if !s.is_file {
+            return (r_in, r_out);
+        }
+        let t = r_out - r_in;
+        let (frac, min_px) = self.file_inset;
+        (r_in + (t * frac).max(min_px).min(t * 0.5), r_out)
+    }
+
     pub fn center_radius(&self) -> f32 {
         self.radii.first().map(|r| r.0).unwrap_or(self.outer_radius)
     }
@@ -284,6 +309,7 @@ pub fn build_with_free(
         rings: vec![Vec::new(); depth],
         index: HashMap::new(),
         view: ViewBounds::new(center, view),
+        file_inset: (params.file_inset, params.file_inset_min_px),
     };
 
     let total = model.node(root).metric(metric);
@@ -309,6 +335,7 @@ pub fn build_with_free(
             count: 0,
             group_size: free,
             first: NO_NODE,
+            is_file: false,
         });
     }
     for (ring, sectors) in layout.rings.iter().enumerate() {
@@ -395,6 +422,7 @@ fn emit(
                 count: 0,
                 group_size: 0,
                 first: NO_NODE,
+                is_file: !model.node(c).is_dir,
             });
         }
         // Deeper rings can be on screen even when this one is not.
@@ -429,6 +457,7 @@ fn emit(
                     count,
                     group_size: rest,
                     first: c,
+                    is_file: false,
                 });
             }
             break;
@@ -518,6 +547,35 @@ mod tests {
         let big = build(&m, 0, Metric::Logical, Pos2::ZERO, 60_000.0, everything(), &p);
         assert_eq!(big.rings[0].len(), 201);
         assert!(big.rings[0].iter().all(|s| !s.is_group()));
+    }
+
+    /// Files are drawn inset from their folder, directories and groups are
+    /// not, and hit testing covers the whole ring.
+    #[test]
+    fn files_are_inset() {
+        let raw = RawDir {
+            name: "r".into(),
+            files: vec![f("file", 60)],
+            subdirs: vec![RawDir {
+                name: "dir".into(),
+                files: vec![f("inner", 40)],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let m = Model::from_raw(raw, "X:\\".into(), 1);
+        let l = build(&m, 0, Metric::Logical, Pos2::ZERO, 200.0, everything(), &LayoutParams::default());
+        let (r_in, r_out) = l.radii[0];
+        let file = l.rings[0].iter().find(|s| m.name(s.node) == "file").unwrap();
+        let dir = l.rings[0].iter().find(|s| m.name(s.node) == "dir").unwrap();
+        assert!(file.is_file && !dir.is_file);
+        assert_eq!(l.sector_radii(0, dir), (r_in, r_out));
+        let (f_in, f_out) = l.sector_radii(0, file);
+        assert_eq!(f_out, r_out);
+        assert!((f_in - (r_in + 0.3 * (r_out - r_in))).abs() < 1e-3);
+        // The gap still belongs to the file: angle 0 is inside it (largest first).
+        let gap = Pos2::new(0.0, -(r_in + 1.0));
+        assert_eq!(l.hit_test(gap).map(|(ring, i)| l.rings[ring][i].node), Some(file.node));
     }
 
     /// `group_has` picks exactly the merged items, for both metrics, with

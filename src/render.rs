@@ -228,8 +228,8 @@ pub fn build_mesh(model: &Model, layout: &Layout, palette: &Palette, hits: Optio
     mesh.indices.reserve(approx_vertices * 3);
     let n_rings = layout.rings.iter().filter(|r| !r.is_empty()).count();
     for (ring, sectors) in layout.rings.iter().enumerate() {
-        let (r_in, r_out) = layout.radii[ring];
         for (i, s) in sectors.iter().enumerate() {
+            let (r_in, r_out) = layout.sector_radii(ring, s);
             let color = if s.is_free() {
                 palette.free
             } else if s.is_group() && hits.is_some() {
@@ -270,8 +270,8 @@ pub fn disc_mesh(layout: &Layout, color: Color32) -> Mesh {
 /// Semi-transparent overlay mesh for one highlighted sector.
 pub fn highlight_mesh(layout: &Layout, ring: usize, idx: usize, color: Color32) -> Mesh {
     let mut mesh = Mesh::default();
-    let (r_in, r_out) = layout.radii[ring];
     let s = &layout.rings[ring][idx];
+    let (r_in, r_out) = layout.sector_radii(ring, s);
     let (a0, a1) = with_gap(s, r_out);
     for (p0, p1) in visible_pieces(layout, a0, a1, r_out) {
         push_sector(&mut mesh, layout.center, r_in, r_out, p0, p1, color);
@@ -282,8 +282,8 @@ pub fn highlight_mesh(layout: &Layout, ring: usize, idx: usize, color: Color32) 
 /// Closed polylines around the visible parts of one sector, for stroking an
 /// outline.
 pub fn sector_outline(layout: &Layout, ring: usize, idx: usize) -> Vec<Vec<Pos2>> {
-    let (r_in, r_out) = layout.radii[ring];
     let s = &layout.rings[ring][idx];
+    let (r_in, r_out) = layout.sector_radii(ring, s);
     let (a0, a1) = with_gap(s, r_out);
     visible_pieces(layout, a0, a1, r_out)
         .map(|(p0, p1)| {
