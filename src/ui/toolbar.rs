@@ -166,28 +166,15 @@ impl App {
         });
     }
 
-    /// Current path (read-only) or a free-form path to scan.
+    /// The current path, or a path to type and scan (`ui::path_field`).
     fn path_field(&mut self, ui: &mut Ui) {
-        if let Some(m) = &self.model {
-            let path = m.path(self.nav.root);
-            ui.add(
-                egui::Label::new(egui::RichText::new(path).monospace()).truncate(),
-            );
-        } else {
-            // Scan on the right, the field takes whatever width is left.
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let scan = ui.button("Scan");
-                let resp = ui.add(
-                    egui::TextEdit::singleline(&mut self.custom_path)
-                        .desired_width(ui.available_width())
-                        .hint_text(r"Path to scan, e.g. D:\Projects"),
-                );
-                let go = scan.clicked()
-                    || (resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
-                if go && !self.custom_path.trim().is_empty() {
-                    self.start_scan(PathBuf::from(self.custom_path.trim()));
-                }
-            });
+        let current = self.model.as_ref().map(|m| m.path(self.nav.root));
+        let drives = &self.drives;
+        let go = self.path_edit.show(ui, &mut self.custom_path, current, drives, |p| {
+            crate::app::is_remote(drives, p)
+        });
+        if let Some(path) = go {
+            self.start_scan(path);
         }
     }
 

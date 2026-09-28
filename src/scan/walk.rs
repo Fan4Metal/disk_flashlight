@@ -62,8 +62,13 @@ impl Progress {
     }
 }
 
-/// Scan `root` and pack the result into a [`Model`].
+/// Scan `root` and pack the result into a [`Model`]. A root that is missing
+/// or not a folder fails the scan (rather than giving an empty chart).
 pub fn scan(root: &Path, progress: &Progress) -> anyhow::Result<Model> {
+    let meta = std::fs::metadata(root).map_err(|e| anyhow::anyhow!("{}: {e}", root.display()))?;
+    if !meta.is_dir() {
+        anyhow::bail!("{} is not a folder", root.display());
+    }
     let root_path = root.to_string_lossy().into_owned();
     let cluster = super::win::cluster_size(root);
     let name = root_display_name(root);

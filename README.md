@@ -68,7 +68,7 @@ disk_flashlight.exe --version    # prints the version
 disk_flashlight.exe --mft C:\    # restarts as administrator (UAC prompt) and scans C: through the MFT
 ```
 
-Besides the drives, the drive list offers **Choose folder…**, which opens the standard Windows folder dialog and scans the chosen folder; a path can also be typed into the path field.
+Besides the drives, the drive list offers **Choose folder…**, which opens the standard Windows folder dialog and scans the chosen folder. A path can also be typed into the path field at the right of the toolbar, which shows the current path and becomes editable on a click, as the address bar of Explorer: while typing, the matching folders (or drives) are offered below it, the arrow keys pick one, `Tab` or `Enter` takes it, and `Enter` scans the typed path; `Esc` cancels. A path that does not exist or is not a folder is reported in the status bar, and the results on screen stay.
 
 Setting the environment variable `RUST_LOG=disk_flashlight=debug` prints per-phase timings of the MFT scanner.
 

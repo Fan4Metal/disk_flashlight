@@ -16,6 +16,7 @@ use crate::ui::about::AboutDialog;
 use crate::ui::{DANGER, ItemCommand, SideView};
 use crate::ui::chart::{ChartAction, ChartView};
 use crate::ui::errors::ErrorsView;
+use crate::ui::path_field::PathField;
 use crate::ui::files::FilesView;
 use crate::ui::search::SearchView;
 use crate::ui::tree::TreeView;
@@ -53,6 +54,8 @@ pub struct App {
     deleting: Option<Deleting>,
     /// "Choose folder…" was picked: open the folder dialog.
     pub choose_folder: bool,
+    /// The toolbar's path field.
+    pub path_edit: PathField,
     /// Icon of the start screen, rasterised on first show.
     start_icon: Option<egui::TextureHandle>,
 }
@@ -115,6 +118,7 @@ impl App {
             confirm_delete: None,
             deleting: None,
             choose_folder: false,
+            path_edit: PathField::default(),
             start_icon: None,
         };
         app.chart.palette.mode = settings.color_mode;
@@ -128,6 +132,20 @@ impl App {
     }
 
     pub fn start_scan(&mut self, path: PathBuf) {
+        // A mistyped path must not cost the results on screen. Network
+        // paths are left to the scan thread: a server that is away can
+        // take long to answer.
+        if !is_remote(&self.drives, &path) {
+            let problem = match std::fs::metadata(&path) {
+                Ok(m) if m.is_dir() => None,
+                Ok(_) => Some("not a folder".to_string()),
+                Err(e) => Some(e.to_string()),
+            };
+            if let Some(problem) = problem {
+                self.status = format!("Cannot scan {}: {problem}", path.display());
+                return;
+            }
+        }
         if let Some(h) = &self.scan {
             h.cancel();
         }
@@ -609,6 +627,18 @@ impl eframe::App for App {
             ChartAction::Command(c) => self.run_command(c),
         }
     }
+}
+
+/// Whether `path` is on a network share or on one of the network `drives`.
+pub fn is_remote(drives: &[Drive], path: &std::path::Path) -> bool {
+    if path.to_string_lossy().starts_with(r"\\") {
+        return true;
+    }
+    scan::mft::drive_letter(path).is_some_and(|letter| {
+        drives.iter().any(|d| {
+            d.root.starts_with(letter.to_ascii_uppercase()) && d.kind == scan::win::DriveKind::Remote
+        })
+    })
 }
 
 /// Size of the icon on the start screen, in points.
