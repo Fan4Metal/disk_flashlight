@@ -2,13 +2,15 @@
 //! query. The scope is the whole scan rather than the chart's centre, so a
 //! click that moves the chart does not change the list.
 
+use std::ops::Range;
+
 use egui::{
     Align2, Color32, CursorIcon, FontId, Key, Margin, Pos2, Rect, Response, ScrollArea, Sense, Shape,
     Stroke, Ui, Vec2, pos2, vec2,
 };
 
 use crate::format::{human_size, thousands};
-use crate::model::{ItemKind, Metric, Model};
+use crate::model::{ItemKind, Metric, Model, match_ranges};
 use crate::ui::files::{ROW_HEIGHT, folder_under, item_row};
 use crate::ui::tree::TreeAction;
 
@@ -33,8 +35,9 @@ pub struct SearchView {
     hits: Vec<u64>,
     /// Bumped whenever `hits` changes; never 0 once searched.
     generation: u64,
-    /// Largest first: item id and its folder relative to the scan root.
-    rows: Vec<(u32, String)>,
+    /// Largest first: item id, its folder relative to the scan root and
+    /// the parts of its name that match.
+    rows: Vec<(u32, String, Vec<Range<usize>>)>,
     selected: Option<u32>,
 }
 
@@ -124,7 +127,15 @@ impl SearchView {
             let found = model.search(0, self.query.trim(), metric, LIMIT, self.whole_word, self.kind);
             (self.count, self.total, self.hits) = (found.count, found.total, found.hits);
             self.generation += 1;
-            self.rows = found.ids.into_iter().map(|id| (id, folder_under(model, 0, id))).collect();
+            let query = self.query.trim();
+            self.rows = found
+                .ids
+                .into_iter()
+                .map(|id| {
+                    let marks = match_ranges(query, self.whole_word, model.name(id));
+                    (id, folder_under(model, 0, id), marks)
+                })
+                .collect();
             self.key = Some((self.query.clone(), metric, self.whole_word, self.kind));
         }
 
@@ -151,10 +162,10 @@ impl SearchView {
         ScrollArea::vertical()
             .auto_shrink([false, false])
             .show_rows(ui, ROW_HEIGHT, self.rows.len(), |ui, range| {
-                for (id, folder) in &self.rows[range] {
+                for (id, folder, marks) in &self.rows[range] {
                     let id = *id;
                     let highlighted = Some(id) == self.selected || Some(id) == chart_hovered;
-                    let row = item_row(ui, model, id, folder, metric, highlighted);
+                    let row = item_row(ui, model, id, folder, marks, metric, highlighted);
                     if row.clicked() {
                         self.selected = Some(id);
                         let n = model.node(id);

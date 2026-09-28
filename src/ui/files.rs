@@ -1,5 +1,7 @@
 //! "Largest files" list: the biggest files under the chart's current root.
 
+use std::ops::Range;
+
 use egui::{Align, Layout, RichText, ScrollArea, Ui};
 
 use crate::format::human_size;
@@ -63,7 +65,7 @@ impl FilesView {
             for (id, folder) in &self.rows[range] {
                 let id = *id;
                 let highlighted = Some(id) == self.selected || Some(id) == chart_hovered;
-                let row = item_row(ui, model, id, folder, metric, highlighted);
+                let row = item_row(ui, model, id, folder, &[], metric, highlighted);
                 if row.clicked() {
                     self.selected = Some(id);
                     action.selected = Some(model.node(id).parent);
@@ -77,13 +79,18 @@ impl FilesView {
     }
 }
 
-/// One list row: the item's name, then its `folder` (weak), and its size on
-/// the right; the full path is in the tooltip.
+/// Background of the parts of a name that a search matched.
+const MARK_BG: egui::Color32 = egui::Color32::from_rgb(255, 226, 130);
+
+/// One list row: the item's name with the byte ranges `marks` on a
+/// highlighter background, then its `folder` (weak), and its size on the
+/// right; the full path is in the tooltip.
 pub(super) fn item_row(
     ui: &mut Ui,
     model: &Model,
     id: u32,
     folder: &str,
+    marks: &[Range<usize>],
     metric: Metric,
     highlighted: bool,
 ) -> egui::Response {
@@ -94,11 +101,24 @@ pub(super) fn item_row(
             ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                 let mut text = egui::text::LayoutJob::default();
                 let style = ui.style();
-                let mut name = model.name(id).to_string();
-                if model.node(id).is_dir {
-                    name.push('\\');
+                let name = model.name(id);
+                let mut piece = |s: &str, marked: bool| {
+                    let mut rich = RichText::new(s);
+                    if marked {
+                        rich = rich.background_color(MARK_BG);
+                    }
+                    rich.append_to(&mut text, style, egui::FontSelection::Default, Align::Center);
+                };
+                let mut at = 0;
+                for r in marks {
+                    piece(&name[at..r.start], false);
+                    piece(&name[r.clone()], true);
+                    at = r.end;
                 }
-                RichText::new(name).append_to(&mut text, style, egui::FontSelection::Default, Align::Center);
+                piece(&name[at..], false);
+                if model.node(id).is_dir {
+                    piece("\\", false);
+                }
                 if !folder.is_empty() {
                     RichText::new(format!("   {folder}")).weak().append_to(
                         &mut text,

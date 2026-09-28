@@ -466,6 +466,51 @@ pub fn masks_only(query: &str) -> bool {
     !groups.is_empty() && groups.iter().flatten().all(|t| matches!(t, Term::Mask { .. }))
 }
 
+/// Byte ranges of `name` matched by the parts of `query` (masks cover the
+/// whole name and are left out), sorted and merged: every occurrence of
+/// every part, as [`Model::search`] would find it, for showing in the list.
+pub fn match_ranges(query: &str, whole_word: bool, name: &str) -> Vec<Range<usize>> {
+    // Lowercase characters of the name, each with the byte range of the
+    // original character it comes from.
+    let mut low: Vec<(char, Range<usize>)> = Vec::new();
+    for (at, c) in name.char_indices() {
+        for l in c.to_lowercase() {
+            low.push((l, at..at + c.len_utf8()));
+        }
+    }
+    let mut found: Vec<Range<usize>> = Vec::new();
+    for term in Term::parse(query).iter().flatten() {
+        let Term::Part {
+            needle,
+            check_start,
+            check_end,
+        } = term
+        else {
+            continue;
+        };
+        let pat: Vec<char> = needle.chars().collect();
+        for (i, w) in low.windows(pat.len()).enumerate() {
+            if !w.iter().zip(&pat).all(|((l, _), p)| l == p) {
+                continue;
+            }
+            let word_at = |j: Option<usize>| j.and_then(|j| low.get(j)).is_some_and(|(l, _)| is_word_char(*l));
+            if whole_word && (*check_start && word_at(i.checked_sub(1)) || *check_end && word_at(Some(i + pat.len()))) {
+                continue;
+            }
+            found.push(w[0].1.start..w[pat.len() - 1].1.end);
+        }
+    }
+    found.sort_by_key(|r| r.start);
+    let mut merged: Vec<Range<usize>> = Vec::new();
+    for r in found {
+        match merged.last_mut() {
+            Some(last) if r.start <= last.end => last.end = last.end.max(r.end),
+            _ => merged.push(r),
+        }
+    }
+    merged
+}
+
 /// One term of a search query, lowercase.
 enum Term {
     /// Part of a name. `check_start` / `check_end`: whether that end is a
@@ -923,6 +968,25 @@ mod tests {
         // Stray `|` is ignored, a quoted one is literal.
         assert_eq!(found("| avi"), ["d 2010.avi"]);
         assert_eq!(found("\"e|f\""), ["e|f.txt"]);
+    }
+
+    #[test]
+    fn match_ranges_for_display() {
+        let m = |q: &str, whole_word, name: &str| -> Vec<(usize, usize)> {
+            match_ranges(q, whole_word, name).into_iter().map(|r| (r.start, r.end)).collect()
+        };
+        assert_eq!(m("report 2025", false, "Report-2025.pdf"), [(0, 6), (7, 11)]);
+        // Byte ranges of the original characters, whatever their case.
+        assert_eq!(m("отчёт", false, "Мой ОТЧЁТ.doc"), [(7, 17)]);
+        // Every occurrence; whole words skip those inside a word.
+        assert_eq!(m("py", false, "pyd.py"), [(0, 2), (4, 6)]);
+        assert_eq!(m("py", true, "pyd.py"), [(4, 6)]);
+        // Overlaps merge; alternatives and quoted phrases count.
+        assert_eq!(m("ab bc", false, "abc"), [(0, 3)]);
+        assert_eq!(m("mp4|mkv \"a b\"", false, "a b.mkv"), [(0, 3), (4, 7)]);
+        // Masks are left out.
+        assert!(m("*.mp4", false, "a.mp4").is_empty());
+        assert!(m("", false, "a").is_empty());
     }
 
     #[test]
