@@ -39,6 +39,15 @@ impl App {
                             pick = Some(d.root.clone());
                         }
                     }
+                    ui.separator();
+                    if ui
+                        .selectable_label(false, "Choose folder…")
+                        .on_hover_text("Pick any folder to scan")
+                        .clicked()
+                    {
+                        // Opened in `App::ui`, which has the window handle.
+                        self.choose_folder = true;
+                    }
                 });
             if let Some(root) = pick {
                 self.start_scan(PathBuf::from(&root));
@@ -51,7 +60,14 @@ impl App {
                     && let Some(h) = &self.scan {
                         h.cancel();
                     }
-            } else if ui.button("Rescan").clicked() {
+            } else if ui
+                .add_enabled(
+                    self.model.is_some() || self.drive.is_some(),
+                    egui::Button::new("Rescan"),
+                )
+                .on_hover_text("Scan the current drive or folder again (F5)")
+                .clicked()
+            {
                 self.rescan();
             }
 

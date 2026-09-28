@@ -25,7 +25,7 @@ The project is written in Rust and uses [egui](https://github.com/emilk/egui) wi
 - Two colour schemes selectable in the toolbar: **by size**, where the largest item among its siblings is red and smaller ones shift towards yellow, with colours becoming paler towards the rim (as in OverDisk), and **by level**, where the colour depends on the ring.
 - Physical (cluster-rounded, compressed and sparse files taken into account) or logical size as the chart metric.
 - Status bar with directory and file counts, logical size, allocated size and slack for the current root.
-- Settings are kept between runs: the chart metric, the colour scheme, the **Follow in tree** option, the tab shown in the left panel, the window size and position, the tree width, and the last scanned path, which is offered in the path field (and selected in the drive list if it is a drive) without being scanned. They are stored in `%APPDATA%\Disk Flashlight\data\app.ron`.
+- Settings are kept between runs: the chart metric, the colour scheme, the **Follow in tree** option, the tab shown in the left panel, the window size and position, the tree width, and the last scanned path, which is offered in the path field without being scanned; nothing is selected in the drive list at start-up, so a slow or network drive is not scanned unasked. They are stored in `%APPDATA%\Disk Flashlight\data\app.ron`.
 
 ## Building
 
@@ -67,6 +67,8 @@ disk_flashlight.exe --bench C:\ --walk  # the same benchmark with the MFT scanne
 disk_flashlight.exe --version    # prints the version
 disk_flashlight.exe --mft C:\    # restarts as administrator (UAC prompt) and scans C: through the MFT
 ```
+
+Besides the drives, the drive list offers **Choose folder…**, which opens the standard Windows folder dialog and scans the chosen folder; a path can also be typed into the path field.
 
 Setting the environment variable `RUST_LOG=disk_flashlight=debug` prints per-phase timings of the MFT scanner.
 

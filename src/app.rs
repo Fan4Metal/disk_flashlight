@@ -51,6 +51,8 @@ pub struct App {
     confirm_delete: Option<(Arc<Model>, u32)>,
     /// Deletion running on a background thread.
     deleting: Option<Deleting>,
+    /// "Choose folder…" was picked: open the folder dialog.
+    pub choose_folder: bool,
 }
 
 /// A move to the Recycle Bin in progress.
@@ -84,15 +86,16 @@ impl App {
                 log::warn!("drive query thread: {e}");
             }
         }
-        // The last scanned path is offered, not scanned: in the path field,
-        // and in the drive picker (so Rescan scans it) if it is a drive.
+        // The last scanned path is only offered in the path field: nothing is
+        // selected in the drive picker and nothing is scanned (a slow or
+        // network drive would start working unasked).
         let last_path = settings.last_path.unwrap_or_default();
         let mut app = Self {
             model: None,
             scan: None,
             drives: Vec::new(),
             drive_rx,
-            drive: drive_root_of(&last_path),
+            drive: None,
             custom_path: last_path,
             nav: History::default(),
             metric: settings.metric,
@@ -109,6 +112,7 @@ impl App {
             disk: None,
             confirm_delete: None,
             deleting: None,
+            choose_folder: false,
         };
         app.chart.palette.mode = settings.color_mode;
         app.tree.follow_hover = settings.follow_in_tree;
@@ -133,6 +137,29 @@ impl App {
         }
         self.status = format!("Scanning {}", path.display());
         self.scan = Some(scan::start(path));
+    }
+
+    /// The system's folder dialog, modal to the window, starting at the
+    /// current scan; the chosen folder is scanned.
+    fn pick_folder(&mut self, parent: &eframe::Frame) {
+        let start = self
+            .model
+            .as_ref()
+            .map(|m| m.root_path.clone())
+            .or_else(|| self.drive.clone())
+            .unwrap_or_else(|| self.custom_path.trim().to_string());
+        let mut dialog = rfd::FileDialog::new()
+            .set_title("Choose a folder to scan")
+            .set_parent(parent);
+        if !start.is_empty() {
+            dialog = dialog.set_directory(&start);
+        }
+        if let Some(dir) = dialog.pick_folder() {
+            let path = dir.to_string_lossy().into_owned();
+            self.drive = drive_root_of(&path);
+            self.custom_path = path;
+            self.start_scan(dir);
+        }
     }
 
     /// Show no scan result: the chart, the tree and the lists go.
@@ -460,7 +487,7 @@ impl eframe::App for App {
         .save(storage);
     }
 
-    fn ui(&mut self, root_ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, root_ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = root_ui.ctx().clone();
         // eframe shows the window after the first frame; maximize it from
         // the second one (see `main::MAXIMIZE_WHEN_SHOWN`).
@@ -487,6 +514,9 @@ impl eframe::App for App {
         egui::Panel::bottom("status").show(root_ui, |ui| {
             self.status_bar(ui);
         });
+        if std::mem::take(&mut self.choose_folder) {
+            self.pick_folder(frame);
+        }
 
         let Some(model) = self.model.clone() else {
             egui::CentralPanel::default().show(root_ui, |ui| match &self.scan {
