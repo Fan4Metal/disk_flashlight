@@ -297,17 +297,21 @@ impl Model {
         best.into_ids()
     }
 
-    /// Files and directories under `root` whose name contains `query`,
-    /// ignoring case, with the `limit` largest of them by `metric`.
+    /// Files and directories under `root` whose names match `query`, with
+    /// the `limit` largest of them by `metric`.
     ///
-    /// With `whole_word`, a match must not continue a word on either side
-    /// (letters, digits and `_` make words). Only ends of the query that are
+    /// The query is split into terms at spaces (`"..."` keeps a phrase
+    /// together), and a name must match every term, ignoring case; terms
+    /// joined by `|` or `;` are alternatives, one of which must match
+    /// (`a|b c` is "a or b, and c"; `*.mp4;*.mkv` as in Explorer). A term
+    /// is a part of the name, or with `*` (any run of characters) or `?`
+    /// (one character) a mask for the whole name, as in Explorer: `*.py`
+    /// finds names ending in `.py`.
+    ///
+    /// With `whole_word`, a part must not continue a word on either side
+    /// (letters, digits and `_` make words). Only ends of the term that are
     /// word characters are checked, so `.py` finds `a.py` and `a.py.bak` but
-    /// not `a.pyd`.
-    ///
-    /// A query with `*` (any run of characters) or `?` (one character) is a
-    /// mask for the whole name instead, as in Explorer: `*.py` finds names
-    /// ending in `.py`. `whole_word` does not apply to masks.
+    /// not `a.pyd`. Masks are not affected.
     pub fn search(
         &self,
         root: u32,
@@ -316,56 +320,17 @@ impl Model {
         limit: usize,
         whole_word: bool,
     ) -> Found {
-        let needle = query.to_lowercase();
-        if needle.is_empty() {
-            Found::default()
-        } else if needle.contains(['*', '?']) {
-            let chars: Vec<char> = needle.chars().collect();
-            let mut lowered = Vec::new();
-            self.find(root, metric, limit, |name| {
-                if needle.is_ascii() && name.is_ascii() {
-                    wildcard(needle.as_bytes(), name.as_bytes(), |p, c| p == c.to_ascii_lowercase())
-                } else {
-                    lowered.clear();
-                    lowered.extend(name.chars().flat_map(char::to_lowercase));
-                    wildcard(&chars, &lowered, |p, c| p == c)
-                }
-            })
-        } else {
-            let check_start = needle.chars().next().is_some_and(is_word_char);
-            let check_end = needle.chars().next_back().is_some_and(is_word_char);
-            // Whether `hay[at..at + len]`, a match, stands as a whole word.
-            let bounded = |hay: &str, at: usize, len: usize| {
-                !(check_start && hay[..at].chars().next_back().is_some_and(is_word_char)
-                    || check_end && hay[at + len..].chars().next().is_some_and(is_word_char))
-            };
-            // An ASCII query compares bytes without lowercasing the names;
-            // other bytes of UTF-8 never equal ASCII ones, so any name works
-            // with it (and a match starts and ends on character boundaries).
-            let ascii = needle.is_ascii();
-            let mut lowered = String::new();
-            self.find(root, metric, limit, |name| {
-                if ascii {
-                    let (h, n) = (name.as_bytes(), needle.as_bytes());
-                    n.len() <= h.len()
-                        && h.windows(n.len()).enumerate().any(|(at, w)| {
-                            w.eq_ignore_ascii_case(n) && (!whole_word || bounded(name, at, n.len()))
-                        })
-                } else if name.is_ascii() {
-                    false // lowercases to ASCII, so it cannot hold the non-ASCII needle
-                } else {
-                    lowered.clear();
-                    lowered.extend(name.chars().flat_map(char::to_lowercase));
-                    if whole_word {
-                        lowered
-                            .match_indices(&needle)
-                            .any(|(at, _)| bounded(&lowered, at, needle.len()))
-                    } else {
-                        lowered.contains(&needle)
-                    }
-                }
-            })
+        let groups = Term::parse(query);
+        if groups.is_empty() {
+            return Found::default();
         }
+        let mut lowered = Lowered::default();
+        self.find(root, metric, limit, |name| {
+            lowered.reset();
+            groups
+                .iter()
+                .all(|any| any.iter().any(|t| t.matches(name, whole_word, &mut lowered)))
+        })
     }
 
     /// Everything under `root` whose name `matches`, for [`Self::search`].
@@ -432,13 +397,29 @@ pub struct Found {
 /// practice.
 fn wildcard<T: Copy + PartialEq + From<u8>>(pat: &[T], text: &[T], eq: impl Fn(T, T) -> bool) -> bool {
     let (star, any) = (T::from(b'*'), T::from(b'?'));
+    let same = |p: T, c: T| p == any || eq(p, c);
+    // The part after the last `*` has a fixed length, so it must match the
+    // end of the text: checked first, this rejects most names for `*.ext`.
+    let (pat, text) = match pat.iter().rposition(|&c| c == star) {
+        Some(last) => {
+            let tail = &pat[last + 1..];
+            let Some(cut) = text.len().checked_sub(tail.len()) else {
+                return false;
+            };
+            if !tail.iter().zip(&text[cut..]).all(|(&p, &c)| same(p, c)) {
+                return false;
+            }
+            (&pat[..=last], &text[..cut])
+        }
+        None => (pat, text),
+    };
     let (mut p, mut t) = (0, 0);
     let mut retry = None; // (mask position after the last `*`, text position)
     while t < text.len() {
         if p < pat.len() && pat[p] == star {
             p += 1;
             retry = Some((p, t));
-        } else if p < pat.len() && (pat[p] == any || eq(pat[p], text[t])) {
+        } else if p < pat.len() && same(pat[p], text[t]) {
             p += 1;
             t += 1;
         } else if let Some((rp, rt)) = retry {
@@ -450,6 +431,157 @@ fn wildcard<T: Copy + PartialEq + From<u8>>(pat: &[T], text: &[T], eq: impl Fn(T
         }
     }
     pat[p..].iter().all(|&c| c == star)
+}
+
+/// Whether every term of `query` is a mask, so that whole words do not
+/// apply to it.
+pub fn masks_only(query: &str) -> bool {
+    let groups = Term::parse(query);
+    !groups.is_empty() && groups.iter().flatten().all(|t| matches!(t, Term::Mask { .. }))
+}
+
+/// One term of a search query, lowercase.
+enum Term {
+    /// Part of a name. `check_start` / `check_end`: whether that end is a
+    /// word character, which whole-word matching then checks.
+    Part {
+        needle: String,
+        check_start: bool,
+        check_end: bool,
+    },
+    /// Mask for the whole name, also as characters for non-ASCII names.
+    Mask { pat: String, chars: Vec<char> },
+}
+
+impl Term {
+    /// Split `query` at whitespace, `|` and `;` outside `"..."` into groups
+    /// that must all match, each a list of alternatives: terms joined by `|`
+    /// or `;`. Empty terms and stray separators are dropped.
+    fn parse(query: &str) -> Vec<Vec<Term>> {
+        let mut groups: Vec<Vec<Term>> = Vec::new();
+        let mut cur = String::new();
+        let mut quoted = false;
+        // The next term joins the last group (after a `|`).
+        let mut join = false;
+        let mut flush = |cur: &mut String, join: &mut bool| {
+            if !cur.is_empty() {
+                let term = Term::new(cur.to_lowercase());
+                match groups.last_mut() {
+                    Some(any) if *join => any.push(term),
+                    _ => groups.push(vec![term]),
+                }
+                cur.clear();
+                *join = false;
+            }
+        };
+        for c in query.chars() {
+            if c == '"' {
+                quoted = !quoted;
+            } else if quoted || !(c.is_whitespace() || c == '|' || c == ';') {
+                cur.push(c);
+            } else {
+                flush(&mut cur, &mut join);
+                if c == '|' || c == ';' {
+                    join = true;
+                }
+            }
+        }
+        flush(&mut cur, &mut join);
+        groups
+    }
+
+    fn new(text: String) -> Self {
+        if text.contains(['*', '?']) {
+            Term::Mask {
+                chars: text.chars().collect(),
+                pat: text,
+            }
+        } else {
+            Term::Part {
+                check_start: text.chars().next().is_some_and(is_word_char),
+                check_end: text.chars().next_back().is_some_and(is_word_char),
+                needle: text,
+            }
+        }
+    }
+
+    fn matches(&self, name: &str, whole_word: bool, lowered: &mut Lowered) -> bool {
+        match self {
+            Term::Part {
+                needle,
+                check_start,
+                check_end,
+            } => {
+                // Whether `hay[at..at + len]`, a match, stands as a whole word.
+                let bounded = |hay: &str, at: usize| {
+                    !(*check_start && hay[..at].chars().next_back().is_some_and(is_word_char)
+                        || *check_end && hay[at + needle.len()..].chars().next().is_some_and(is_word_char))
+                };
+                if needle.is_ascii() {
+                    // Compare bytes without lowercasing the name; other
+                    // bytes of UTF-8 never equal ASCII ones, so any name
+                    // works (and a match starts and ends on char boundaries).
+                    let (h, n) = (name.as_bytes(), needle.as_bytes());
+                    n.len() <= h.len()
+                        && h.windows(n.len())
+                            .enumerate()
+                            .any(|(at, w)| w.eq_ignore_ascii_case(n) && (!whole_word || bounded(name, at)))
+                } else if name.is_ascii() {
+                    false // lowercases to ASCII, so it cannot hold the non-ASCII needle
+                } else {
+                    let hay = lowered.text(name);
+                    if whole_word {
+                        hay.match_indices(needle.as_str()).any(|(at, _)| bounded(hay, at))
+                    } else {
+                        hay.contains(needle.as_str())
+                    }
+                }
+            }
+            Term::Mask { pat, chars } => {
+                if pat.is_ascii() && name.is_ascii() {
+                    wildcard(pat.as_bytes(), name.as_bytes(), |p, c| p == c.to_ascii_lowercase())
+                } else {
+                    wildcard(chars, lowered.chars(name), |p, c| p == c)
+                }
+            }
+        }
+    }
+}
+
+/// Lowercase forms of the name being searched, built on first use and shared
+/// by the terms.
+#[derive(Default)]
+struct Lowered {
+    text: String,
+    chars: Vec<char>,
+    has_text: bool,
+    has_chars: bool,
+}
+
+impl Lowered {
+    /// Start on a new name.
+    fn reset(&mut self) {
+        self.has_text = false;
+        self.has_chars = false;
+    }
+
+    fn text(&mut self, name: &str) -> &str {
+        if !self.has_text {
+            self.text.clear();
+            self.text.extend(name.chars().flat_map(char::to_lowercase));
+            self.has_text = true;
+        }
+        &self.text
+    }
+
+    fn chars(&mut self, name: &str) -> &[char] {
+        if !self.has_chars {
+            self.chars.clear();
+            self.chars.extend(name.chars().flat_map(char::to_lowercase));
+            self.has_chars = true;
+        }
+        &self.chars
+    }
 }
 
 /// Characters that make up words for [`Model::search`]'s whole-word mode.
@@ -689,6 +821,75 @@ mod tests {
     }
 
     #[test]
+    fn search_all_terms() {
+        let raw = RawDir {
+            name: "root".into(),
+            files: ["Big Fish (2003).mp4", "fish big.mp4", "Big Fish.srt", "Отчёт 2025.pdf", "report 2025.pdf"]
+                .into_iter()
+                .map(|n| file(n, 1))
+                .collect(),
+            ..Default::default()
+        };
+        let m = Model::from_raw(raw, "X:\\".into(), 1);
+        let found = |q: &str, whole_word| {
+            let mut names: Vec<String> = m
+                .search(0, q, Metric::Logical, 10, whole_word)
+                .ids
+                .into_iter()
+                .map(|i| m.name(i).to_string())
+                .collect();
+            names.sort();
+            names
+        };
+        // Every term, in any order; masks and parts mix.
+        assert_eq!(found("FISH  big", false), ["Big Fish (2003).mp4", "Big Fish.srt", "fish big.mp4"]);
+        assert_eq!(found("*.mp4 big fish", false), ["Big Fish (2003).mp4", "fish big.mp4"]);
+        assert_eq!(found("2025 отчёт", false), ["Отчёт 2025.pdf"]);
+        // Quotes keep a phrase; an unclosed one runs to the end.
+        assert_eq!(found("\"big fish\"", false), ["Big Fish (2003).mp4", "Big Fish.srt"]);
+        assert_eq!(found("mp4 \"big fish", false), ["Big Fish (2003).mp4"]);
+        // Whole words apply to each part.
+        assert_eq!(found("fish 200", true), Vec::<String>::new());
+        assert_eq!(found("fish 2003", true), ["Big Fish (2003).mp4"]);
+        assert_eq!(m.search(0, "  \"\" ", Metric::Logical, 10, false), Found::default());
+        assert!(masks_only("*.mp4 ?.srt") && !masks_only("*.mp4 fish") && !masks_only(""));
+        assert!(!masks_only("*.mp4|fish"));
+    }
+
+    #[test]
+    fn search_alternatives() {
+        let raw = RawDir {
+            name: "root".into(),
+            files: ["a 2010.mp4", "b 2010.mkv", "c 2011.mkv", "d 2010.avi", "e|f.txt"]
+                .into_iter()
+                .map(|n| file(n, 1))
+                .collect(),
+            ..Default::default()
+        };
+        let m = Model::from_raw(raw, "X:\\".into(), 1);
+        let found = |q: &str| {
+            let mut names: Vec<String> = m
+                .search(0, q, Metric::Logical, 10, false)
+                .ids
+                .into_iter()
+                .map(|i| m.name(i).to_string())
+                .collect();
+            names.sort();
+            names
+        };
+        assert_eq!(found("mp4|mkv"), ["a 2010.mp4", "b 2010.mkv", "c 2011.mkv"]);
+        assert_eq!(found("mp4 | MKV"), found("mp4|mkv"));
+        assert_eq!(found("*.mp4;*.mkv"), found("mp4|mkv"));
+        assert_eq!(found("mp4; mkv|avi 2010"), ["a 2010.mp4", "b 2010.mkv", "d 2010.avi"]);
+        // `|` binds tighter than a space.
+        assert_eq!(found("*.mp4|*.mkv 2010"), ["a 2010.mp4", "b 2010.mkv"]);
+        assert_eq!(found("2010 avi|mp4|"), ["a 2010.mp4", "d 2010.avi"]);
+        // Stray `|` is ignored, a quoted one is literal.
+        assert_eq!(found("| avi"), ["d 2010.avi"]);
+        assert_eq!(found("\"e|f\""), ["e|f.txt"]);
+    }
+
+    #[test]
     fn wildcard_matching() {
         let w = |p: &str, t: &str| wildcard(p.as_bytes(), t.as_bytes(), |a, b| a == b);
         assert!(w("", ""));
@@ -700,6 +901,9 @@ mod tests {
         assert!(w("?", "a"));
         assert!(!w("?", ""));
         assert!(w("*a?c", "abcabc"));
+        assert!(w("*.mp4", ".mp4") && !w("*.mp4", "mp4") && !w("*.mp4", "a.mp4x"));
+        assert!(w("a*?c", "abc") && !w("a*?c", "ac"));
+        assert!(w("*b*", "abc") && w("a*", "a"));
     }
 
     #[test]

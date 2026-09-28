@@ -262,7 +262,7 @@ fn bench(path: PathBuf, allow_mft: bool) -> anyhow::Result<()> {
     }
 
     // Name search over the whole scan, run on every keystroke in the UI.
-    for query in ["d", "dll", "setup", "а", "*.dll", "*a*b*"] {
+    for query in ["d", "dll", "setup", "а", "*.dll", "*a*b*", "a b c", "*.mp4;*.mkv;*.avi"] {
         let t = Instant::now();
         let count = model.search(0, query, model::Metric::Physical, 200, false).count;
         println!(

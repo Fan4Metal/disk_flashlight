@@ -89,8 +89,8 @@ impl SearchView {
             pos2(field.rect.right() - 3.0 - WORD_SIZE.x / 2.0, field.rect.center().y),
             WORD_SIZE,
         );
-        let mask = self.query.contains(['*', '?']);
-        if whole_word_button(ui, word, self.whole_word, !mask).clicked() {
+        let applies = !crate::model::masks_only(&self.query);
+        if whole_word_button(ui, word, self.whole_word, applies).clicked() {
             self.whole_word = !self.whole_word;
             focus = true;
         }
@@ -116,7 +116,11 @@ impl SearchView {
 
         let mut action = TreeAction::default();
         if self.query.trim().is_empty() {
-            ui.weak("Type part of a name, or a mask such as *.mp4, to search the whole scan");
+            ui.weak(
+                "Type part of a name, or a mask such as *.mp4, to search the whole scan. \
+                 Several words must all match, *.mp4;*.mkv (or mp4|mkv) matches either, \
+                 \"quotes\" keep a phrase together.",
+            );
             return action;
         }
         let summary = match self.count {
@@ -183,7 +187,7 @@ fn clear_button(ui: &mut Ui, center: Pos2) -> Response {
 
 /// The whole-word toggle in `rect`: "ab" over a bracket, as in code editors;
 /// highlighted with the selection colour while `on`, faded unless `applies`
-/// (masks ignore it).
+/// (a query of masks only ignores it).
 fn whole_word_button(ui: &mut Ui, rect: Rect, on: bool, applies: bool) -> Response {
     let resp = ui
         .interact(rect, ui.id().with("whole_word"), Sense::click())
@@ -191,7 +195,7 @@ fn whole_word_button(ui: &mut Ui, rect: Rect, on: bool, applies: bool) -> Respon
         .on_hover_text(if applies {
             "Match whole words only"
         } else {
-            "Match whole words only (not used with * and ?)"
+            "Match whole words only (not used with masks)"
         });
     let fade = if applies { 1.0 } else { 0.4 };
     let visuals = ui.visuals();
