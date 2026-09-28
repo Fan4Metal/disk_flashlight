@@ -19,7 +19,8 @@ fn main() {
     let mut res = winresource::WindowsResource::new();
     res.set_icon(ico_path.to_str().unwrap())
         .set("FileDescription", "Disk Flashlight - disk space analyzer")
-        .set("ProductName", "Disk Flashlight");
+        .set("ProductName", "Disk Flashlight")
+        .set("LegalCopyright", "Copyright (C) 2026 Fan4_Metal");
     if let Err(e) = res.compile() {
         // A missing resource compiler must not break the build.
         println!("cargo:warning=icon not embedded: {e}");
