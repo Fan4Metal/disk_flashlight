@@ -475,7 +475,7 @@ mod tests {
     use crate::model::{RawDir, RawFile};
 
     fn f(name: &str, size: u64) -> RawFile {
-        RawFile { name: name.into(), size, alloc: size }
+        RawFile { name: name.into(), size, alloc: size, modified: 0 }
     }
 
     /// A view large enough to show the whole chart.
@@ -582,13 +582,14 @@ mod tests {
     /// ties and a physical order unlike the logical one.
     #[test]
     fn group_has_matches_the_merged_items() {
-        let mut files = vec![RawFile { name: "big".into(), size: 1_000_000, alloc: 1_000_000 }];
+        let mut files = vec![RawFile { name: "big".into(), size: 1_000_000, alloc: 1_000_000, modified: 0 }];
         files.extend((0..300u64).map(|i| RawFile {
             name: format!("t{i}"),
             size: 40 + i % 7 * 20,
             alloc: 200 - i % 5 * 40,
+            modified: 0,
         }));
-        files.extend((0..20u64).map(|i| RawFile { name: format!("m{i}"), size: 5_000, alloc: 3_000 + i % 3 * 1_000 }));
+        files.extend((0..20u64).map(|i| RawFile { name: format!("m{i}"), size: 5_000, alloc: 3_000 + i % 3 * 1_000, modified: 0 }));
         let m = model(files);
         let p = LayoutParams::default();
         for metric in [Metric::Logical, Metric::Physical] {

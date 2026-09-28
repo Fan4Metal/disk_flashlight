@@ -210,12 +210,13 @@ fn bench(path: PathBuf, allow_mft: bool) -> anyhow::Result<()> {
         human_size(root.alloc)
     );
 
-    println!("top-level (largest first):");
+    println!("top-level (largest first, with the last change):");
     for c in model.children(0).take(12) {
         let n = model.node(c);
         println!(
-            "  {:>10}  {}{}",
+            "  {:>10}  {:<10}  {}{}",
             human_size(n.size),
+            format::date(n.modified),
             model.name(c),
             if n.is_dir { "\\" } else { "" }
         );
@@ -260,7 +261,7 @@ fn bench(path: PathBuf, allow_mft: bool) -> anyhow::Result<()> {
 
     // "Largest files" tab for the whole scan, the worst case.
     let t = Instant::now();
-    let top = model.largest_files(0, model::Metric::Physical, 100);
+    let top = model.largest_files(0, model::Metric::Physical, 100, None);
     println!(
         "top files: {:.2}ms  ({} listed)",
         t.elapsed().as_secs_f64() * 1e3,

@@ -295,7 +295,7 @@ mod tests {
         // files, so give each one a file of that size.
         RawDir {
             name: name.into(),
-            files: vec![crate::model::RawFile { name: "f".into(), size, alloc: size }],
+            files: vec![crate::model::RawFile { name: "f".into(), size, alloc: size, modified: 0 }],
             subdirs,
             ..Default::default()
         }

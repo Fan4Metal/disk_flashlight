@@ -31,6 +31,10 @@ pub struct Node {
     pub files: u32,
     /// Number of directories in the subtree (excluding this one).
     pub dirs: u32,
+    /// Last write time in Unix seconds, 0 if unknown. For a directory, the
+    /// newest time in its subtree (its own time if it is empty). Fits in
+    /// the padding, so it costs no memory.
+    pub modified: u32,
 }
 
 impl Node {
@@ -59,13 +63,19 @@ pub struct RawDir {
     pub alloc: u64,
     pub file_count: u32,
     pub dir_count: u32,
+    /// Last write time of the folder itself (Unix seconds, 0 = unknown);
+    /// `finalize` replaces it with the newest time in the subtree unless
+    /// the folder is empty.
+    pub modified: u32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct RawFile {
     pub name: String,
     pub size: u64,
     pub alloc: u64,
+    /// Last write time in Unix seconds, 0 if unknown.
+    pub modified: u32,
 }
 
 impl RawDir {
@@ -75,9 +85,11 @@ impl RawDir {
         let mut alloc = 0u64;
         let mut files = self.files.len() as u32;
         let mut dirs = self.subdirs.len() as u32;
+        let mut newest = 0u32;
         for f in &self.files {
             size += f.size;
             alloc += f.alloc;
+            newest = newest.max(f.modified);
         }
         for d in &mut self.subdirs {
             d.finalize();
@@ -85,12 +97,36 @@ impl RawDir {
             alloc += d.alloc;
             files += d.file_count;
             dirs += d.dir_count;
+            newest = newest.max(d.modified);
         }
         self.size = size;
         self.alloc = alloc;
         self.file_count = files;
         self.dir_count = dirs;
+        // The folder's own time changes when an entry is added, removed or
+        // renamed, which says little about the age of its contents.
+        if !self.files.is_empty() || !self.subdirs.is_empty() {
+            self.modified = newest;
+        }
     }
+}
+
+/// Seconds between 1601-01-01 (FILETIME epoch) and 1970-01-01.
+const FILETIME_UNIX_DIFF: u64 = 11_644_473_600;
+
+/// A Windows FILETIME (100 ns ticks since 1601) as Unix seconds, saturated
+/// to `u32`; times before 1970 and 0 (unset) become 0, "unknown".
+pub fn unix_from_filetime(ft: u64) -> u32 {
+    (ft / 10_000_000)
+        .saturating_sub(FILETIME_UNIX_DIFF)
+        .min(u32::MAX as u64) as u32
+}
+
+/// The current time in Unix seconds.
+pub fn unix_now() -> u32 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs().min(u32::MAX as u64) as u32)
 }
 
 #[derive(Debug, Default)]
@@ -100,6 +136,9 @@ pub struct Model {
     /// Root path as scanned, e.g. `C:\` or `D:\Projects`.
     pub root_path: String,
     pub cluster_size: u64,
+    /// When the scan finished (Unix seconds): ages are counted from here,
+    /// so that they do not drift while the results are looked at.
+    pub scanned_at: u32,
 }
 
 impl Model {
@@ -113,6 +152,7 @@ impl Model {
             names: String::new(),
             root_path,
             cluster_size,
+            scanned_at: unix_now(),
         };
         m.push_dir(&root, NO_NODE);
         m.pack_children(&root, 0);
@@ -134,6 +174,7 @@ impl Model {
             alloc: d.alloc,
             files: d.file_count,
             dirs: d.dir_count,
+            modified: d.modified,
         });
         id
     }
@@ -153,6 +194,7 @@ impl Model {
             alloc: f.alloc,
             files: 0,
             dirs: 0,
+            modified: f.modified,
         });
         id
     }
@@ -203,15 +245,19 @@ impl Model {
     /// map them by path (`rel_path` / `find_dir`). `id` must not be the root.
     pub fn without(&self, id: u32) -> Model {
         debug_assert_ne!(id, 0, "the root cannot be removed");
-        Model::from_raw(self.raw_dir(0, id), self.root_path.clone(), self.cluster_size)
+        let mut m = Model::from_raw(self.raw_dir(0, id), self.root_path.clone(), self.cluster_size);
+        m.scanned_at = self.scanned_at;
+        m
     }
 
     /// The subtree of `dir` as a scanner would produce it, leaving out
     /// `skip`. Directories before files, each in stored order, so that the
     /// stable sort in `pack_children` keeps the order of equal sizes.
     fn raw_dir(&self, dir: u32, skip: u32) -> RawDir {
+        // A folder left empty keeps the newest time of what it held.
         let mut d = RawDir {
             name: self.name(dir).to_string(),
+            modified: self.node(dir).modified,
             ..Default::default()
         };
         for c in self.children(dir) {
@@ -225,6 +271,7 @@ impl Model {
                     name: self.name(c).to_string(),
                     size: n.size,
                     alloc: n.alloc,
+                    modified: n.modified,
                 });
             }
         }
@@ -306,11 +353,14 @@ impl Model {
         cur
     }
 
-    /// The `limit` largest files under `root` by `metric`, largest first.
-    /// Directories no larger than the smallest file kept so far are not
-    /// entered: nothing inside them can make the list. Among files of equal
-    /// size the choice is deterministic but otherwise unspecified.
-    pub fn largest_files(&self, root: u32, metric: Metric, limit: usize) -> Vec<u32> {
+    /// The `limit` largest files under `root` by `metric`, largest first;
+    /// with `before`, only files last modified before that time (Unix
+    /// seconds; files without a known time are left out). Directories no
+    /// larger than the smallest file kept so far are not entered: nothing
+    /// inside them can make the list. Among files of equal size the choice
+    /// is deterministic but otherwise unspecified.
+    pub fn largest_files(&self, root: u32, metric: Metric, limit: usize, before: Option<u32>) -> Vec<u32> {
+        let old_enough = |t: u32| before.is_none_or(|b| t != 0 && t < b);
         let mut best = TopN::new(limit);
         let mut stack = vec![root];
         while let Some(dir) = stack.pop() {
@@ -322,7 +372,7 @@ impl Model {
                 }
                 if n.is_dir {
                     stack.push(c);
-                } else {
+                } else if old_enough(n.modified) {
                     best.push(m, c);
                 }
             }
@@ -736,7 +786,58 @@ mod tests {
     use super::*;
 
     fn file(name: &str, size: u64) -> RawFile {
-        RawFile { name: name.into(), size, alloc: size }
+        RawFile { name: name.into(), size, alloc: size, modified: 0 }
+    }
+
+    fn dated(name: &str, size: u64, modified: u32) -> RawFile {
+        RawFile { modified, ..file(name, size) }
+    }
+
+    #[test]
+    fn node_stays_small() {
+        // The time sits in what was padding; a million nodes stay 48 MB.
+        assert_eq!(size_of::<Node>(), 48);
+    }
+
+    #[test]
+    fn filetime_to_unix() {
+        assert_eq!(unix_from_filetime(0), 0);
+        assert_eq!(unix_from_filetime(116_444_736_000_000_000), 0);
+        // 2024-01-01 00:00:00 UTC.
+        assert_eq!(unix_from_filetime(133_485_408_000_000_000), 1_704_067_200);
+        assert_eq!(unix_from_filetime(u64::MAX), u32::MAX);
+    }
+
+    #[test]
+    fn folders_take_the_newest_time_inside() {
+        let raw = RawDir {
+            name: "root".into(),
+            modified: 999,
+            files: vec![dated("old", 1, 100)],
+            subdirs: vec![
+                RawDir {
+                    name: "fresh".into(),
+                    modified: 5,
+                    files: vec![dated("a", 1, 300), dated("b", 1, 200)],
+                    ..Default::default()
+                },
+                RawDir { name: "empty".into(), modified: 250, ..Default::default() },
+            ],
+            ..Default::default()
+        };
+        let m = Model::from_raw(raw, "X:\\".into(), 1);
+        let id = |name: &str| m.children(0).find(|&c| m.name(c) == name).unwrap();
+        // The folder's own time (5, 999) gives way to its contents.
+        assert_eq!(m.node(id("fresh")).modified, 300);
+        assert_eq!(m.node(id("empty")).modified, 250);
+        assert_eq!(m.node(id("old")).modified, 100);
+        assert_eq!(m.node(0).modified, 300);
+        // Deleting the newest file makes the folder older.
+        let a = m.children(id("fresh")).find(|&c| m.name(c) == "a").unwrap();
+        let m2 = m.without(a);
+        assert_eq!(m2.node(m2.find_dir(&["fresh"])).modified, 200);
+        assert_eq!(m2.node(0).modified, 250);
+        assert_eq!(m2.scanned_at, m.scanned_at);
     }
 
     #[test]
@@ -778,7 +879,8 @@ mod tests {
                 .map(|i| {
                     let bits = rnd(20);
                     let size = rnd(1 << bits);
-                    RawFile { name: format!("f{i}"), size, alloc: size.div_ceil(4096) * 4096 }
+                    let modified = rnd(100) as u32;
+                    RawFile { name: format!("f{i}"), size, alloc: size.div_ceil(4096) * 4096, modified }
                 })
                 .collect();
             let subdirs = if depth == 0 {
@@ -802,16 +904,20 @@ mod tests {
         for &root in &roots {
             for metric in [Metric::Logical, Metric::Physical] {
                 for limit in [0, 1, 3, 10, 1000] {
-                    let mut all: Vec<u64> = (0..m.len() as u32)
-                        .filter(|&i| !m.node(i).is_dir && under(root, i))
-                        .map(|i| m.node(i).metric(metric))
-                        .collect();
-                    all.sort_unstable_by(|a, b| b.cmp(a));
-                    all.truncate(limit);
-                    let got = m.largest_files(root, metric, limit);
-                    assert!(got.iter().all(|&i| !m.node(i).is_dir && under(root, i)));
-                    let sizes: Vec<u64> = got.iter().map(|&i| m.node(i).metric(metric)).collect();
-                    assert_eq!(sizes, all, "root {root}, {metric:?}, limit {limit}");
+                    for before in [None, Some(50)] {
+                        // Time 0 is "unknown" and never passes the filter.
+                        let old = |i: u32| before.is_none_or(|b| (1..b).contains(&m.node(i).modified));
+                        let mut all: Vec<u64> = (0..m.len() as u32)
+                            .filter(|&i| !m.node(i).is_dir && under(root, i) && old(i))
+                            .map(|i| m.node(i).metric(metric))
+                            .collect();
+                        all.sort_unstable_by(|a, b| b.cmp(a));
+                        all.truncate(limit);
+                        let got = m.largest_files(root, metric, limit, before);
+                        assert!(got.iter().all(|&i| !m.node(i).is_dir && under(root, i) && old(i)));
+                        let sizes: Vec<u64> = got.iter().map(|&i| m.node(i).metric(metric)).collect();
+                        assert_eq!(sizes, all, "root {root}, {metric:?}, limit {limit}, before {before:?}");
+                    }
                 }
             }
         }

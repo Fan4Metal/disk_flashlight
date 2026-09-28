@@ -24,6 +24,9 @@ pub enum ColorMode {
     /// Hue from the ring (red core to yellow rim), brightness alternating
     /// between neighbours.
     Depth,
+    /// Hue from the last write time (red = just now, blue = ten years or
+    /// more), on a logarithmic scale; folders by the newest item inside.
+    Age,
 }
 
 /// Colours are built with egui's `Hsva`, which works in linear RGB; the
@@ -47,6 +50,14 @@ pub struct Palette {
     pub fade_max: f32,
     /// Saturation of "N smaller items" group sectors.
     pub sat_group: f32,
+    // --- Age mode ---
+    /// Hue (degrees) of an item modified just before the scan.
+    pub hue_new: f32,
+    /// Hue (degrees) of an item `age_span_days` old or older.
+    pub hue_old: f32,
+    pub age_span_days: f32,
+    /// Items whose time is unknown.
+    pub unknown: Color32,
     /// Free space of a drive: a pale cool grey, apart from the warm palette.
     pub free: Color32,
     // --- Search highlight ---
@@ -71,6 +82,10 @@ impl Default for Palette {
             hue_smallest: 56.0,
             fade_max: 0.6,
             sat_group: 0.22,
+            hue_new: 0.0,
+            hue_old: 225.0,
+            age_span_days: 3650.0,
+            unknown: Color32::from_gray(200),
             free: Color32::from_rgb(218, 228, 238),
             dimmed: Color32::from_gray(246),
             partial_min: 0.3,
@@ -79,12 +94,55 @@ impl Default for Palette {
 }
 
 impl Palette {
+    /// Position of an item modified at `modified` on the age scale, from 0
+    /// (at `scanned_at`) to 1 (`age_span_days` before it or earlier);
+    /// `None` when the time is unknown.
+    pub fn age_t(&self, scanned_at: u32, modified: u32) -> Option<f32> {
+        (modified != 0).then(|| self.age_t_of_days(scanned_at.saturating_sub(modified) as f32 / 86_400.0))
+    }
+
+    /// Scale position (see [`Self::age_t`]) of an age of `days`.
+    pub fn age_t_of_days(&self, days: f32) -> f32 {
+        (days.ln_1p() / self.age_span_days.ln_1p()).clamp(0.0, 1.0)
+    }
+
+    /// Colour of age scale position `t` with saturation `sat`, for the
+    /// chart and its legend.
+    pub fn age_color(&self, t: f32, sat: f32) -> Color32 {
+        let hue = self.hue_new + (self.hue_old - self.hue_new) * t;
+        Color32::from(Hsva::new(hue / 360.0, sat, self.val_even, 1.0))
+    }
+
+    /// Share of saturation lost towards white by `ring` of `n_rings`.
+    fn fade(&self, ring: usize, n_rings: usize) -> f32 {
+        if n_rings > 1 {
+            self.fade_max * ring.min(n_rings - 1) as f32 / (n_rings - 1) as f32
+        } else {
+            0.0
+        }
+    }
+
     /// Colour of the `index`-th sector of `ring` (0 = innermost) when
     /// `n_rings` rings are shown; `rel` is its size relative to the largest
-    /// sibling (see [`Sector::rel`]).
-    pub fn color(&self, ring: usize, index: usize, n_rings: usize, rel: f32, is_dir: bool) -> Color32 {
+    /// sibling (see [`Sector::rel`]), `age` its [`Self::age_t`], used in the
+    /// age mode only.
+    pub fn color(
+        &self,
+        ring: usize,
+        index: usize,
+        n_rings: usize,
+        rel: f32,
+        age: Option<f32>,
+        is_dir: bool,
+    ) -> Color32 {
         let sat = if is_dir { self.sat_dir } else { self.sat_file };
         match self.mode {
+            ColorMode::Age => match age {
+                // Half the fade of the size mode: the hue carries the
+                // meaning here, and pale hues are harder to tell apart.
+                Some(t) => self.age_color(t, sat * (1.0 - 0.5 * self.fade(ring, n_rings))),
+                None => self.unknown,
+            },
             ColorMode::Depth => {
                 let hue = self.hues[ring.min(self.hues.len() - 1)];
                 let val = if index.is_multiple_of(2) {
@@ -98,11 +156,7 @@ impl Palette {
                 let rel = rel.clamp(0.0, 1.0);
                 let hue = self.hue_smallest + (self.hue_largest - self.hue_smallest) * rel;
                 // Linear fade with depth, like OverDisk, but towards white.
-                let fade = if n_rings > 1 {
-                    self.fade_max * ring.min(n_rings - 1) as f32 / (n_rings - 1) as f32
-                } else {
-                    0.0
-                };
+                let fade = self.fade(ring, n_rings);
                 Color32::from(Hsva::new(hue / 360.0, sat * (1.0 - fade), self.val_even, 1.0))
             }
         }
@@ -111,16 +165,14 @@ impl Palette {
     /// Colour of a group of merged small items: a muted, warm neutral that
     /// reads as "the rest" next to the coloured sectors.
     pub fn group_color(&self, ring: usize, n_rings: usize) -> Color32 {
-        let hue = match self.mode {
-            ColorMode::Size => self.hue_smallest,
-            ColorMode::Depth => self.hues[ring.min(self.hues.len() - 1)],
+        let (hue, sat) = match self.mode {
+            ColorMode::Size => (self.hue_smallest, self.sat_group),
+            ColorMode::Depth => (self.hues[ring.min(self.hues.len() - 1)], self.sat_group),
+            // A near grey: any hue would read as an age.
+            ColorMode::Age => (40.0, 0.08),
         };
-        let fade = if n_rings > 1 {
-            self.fade_max * ring.min(n_rings - 1) as f32 / (n_rings - 1) as f32
-        } else {
-            0.0
-        };
-        Color32::from(Hsva::new(hue / 360.0, self.sat_group * (1.0 - fade), self.val_odd, 1.0))
+        let fade = self.fade(ring, n_rings);
+        Color32::from(Hsva::new(hue / 360.0, sat * (1.0 - fade), self.val_odd, 1.0))
     }
 
     /// `color` of a sector while search matches are highlighted; `share` is
@@ -235,11 +287,17 @@ pub fn build_mesh(model: &Model, layout: &Layout, palette: &Palette, hits: Optio
             } else if s.is_group() && hits.is_some() {
                 // The muted group colour would read as dimmed: colour a group
                 // holding matches like a small item instead.
-                palette.color(ring, i, n_rings, 0.0, false)
+                palette.color(ring, i, n_rings, 0.0, None, false)
             } else if s.is_group() {
                 palette.group_color(ring, n_rings)
             } else {
-                palette.color(ring, i, n_rings, s.rel, model.node(s.node).is_dir)
+                let n = model.node(s.node);
+                let age = if palette.mode == ColorMode::Age {
+                    palette.age_t(model.scanned_at, n.modified)
+                } else {
+                    None
+                };
+                palette.color(ring, i, n_rings, s.rel, age, n.is_dir)
             };
             let color = match hits {
                 Some(hits) => palette.highlight(color, match_share(model, layout, s, hits)),
@@ -329,29 +387,29 @@ mod tests {
     fn size_mode_hue_follows_relative_size_and_fades_with_depth() {
         let p = Palette::default();
         assert_eq!(p.mode, ColorMode::Size);
-        let (r, g, _) = rgb(p.color(0, 0, 4, 1.0, true));
+        let (r, g, _) = rgb(p.color(0, 0, 4, 1.0, None, true));
         assert!(r > 200 && g < r / 2, "largest sibling should be red");
-        let (r2, g2, _) = rgb(p.color(0, 1, 4, 0.05, true));
+        let (r2, g2, _) = rgb(p.color(0, 1, 4, 0.05, None, true));
         assert!(g2 > g + 60 && r2 > 200, "small sibling should be yellowish");
         // Same relative size further out: lighter (closer to white).
-        let (_, g_in, b_in) = rgb(p.color(0, 0, 4, 1.0, true));
-        let (_, g_out, b_out) = rgb(p.color(3, 0, 4, 1.0, true));
+        let (_, g_in, b_in) = rgb(p.color(0, 0, 4, 1.0, None, true));
+        let (_, g_out, b_out) = rgb(p.color(3, 0, 4, 1.0, None, true));
         assert!(g_out > g_in && b_out > b_in, "outer ring should be paler");
         // Neighbours of equal size get the same colour (no alternation).
-        assert_eq!(p.color(1, 0, 4, 0.5, true), p.color(1, 1, 4, 0.5, true));
+        assert_eq!(p.color(1, 0, 4, 0.5, None, true), p.color(1, 1, 4, 0.5, None, true));
     }
 
     #[test]
     fn highlight_fades_by_matching_share() {
         let p = Palette::default();
-        let c = p.color(0, 0, 3, 1.0, true);
+        let c = p.color(0, 0, 3, 1.0, None, true);
         assert_eq!(p.highlight(c, 1.0), c);
         let (none, some, most) = (p.highlight(c, 0.0), p.highlight(c, 0.01), p.highlight(c, 0.8));
         // Red fading towards grey gains green: the less matches, the paler.
         assert!(none.g() > some.g() + 10 && some.g() > most.g() && most.g() > c.g());
         // Without matches every colour turns into the same grey.
         assert_eq!(none, p.dimmed);
-        assert_eq!(p.highlight(p.color(2, 1, 3, 0.1, false), 0.0), p.dimmed);
+        assert_eq!(p.highlight(p.color(2, 1, 3, 0.1, None, false), 0.0), p.dimmed);
     }
 
     #[test]
@@ -360,7 +418,33 @@ mod tests {
             mode: ColorMode::Depth,
             ..Palette::default()
         };
-        assert_ne!(p.color(0, 0, 3, 1.0, true), p.color(0, 1, 3, 1.0, true));
-        assert_eq!(p.color(0, 0, 3, 1.0, true), p.color(0, 0, 3, 0.1, true));
+        assert_ne!(p.color(0, 0, 3, 1.0, None, true), p.color(0, 1, 3, 1.0, None, true));
+        assert_eq!(p.color(0, 0, 3, 1.0, None, true), p.color(0, 0, 3, 0.1, None, true));
+    }
+
+    #[test]
+    fn age_mode_runs_from_red_to_blue() {
+        let p = Palette {
+            mode: ColorMode::Age,
+            ..Palette::default()
+        };
+        const DAY: u32 = 86_400;
+        let now = 20_000 * DAY;
+        assert_eq!(p.age_t(now, now), Some(0.0));
+        assert_eq!(p.age_t(now, 0), None);
+        assert_eq!(p.age_t(now, now + DAY), Some(0.0), "a time after the scan is new");
+        assert_eq!(p.age_t(now, now - 5000 * DAY), Some(1.0));
+        let year = p.age_t(now, now - 365 * DAY).unwrap();
+        let month = p.age_t(now, now - 30 * DAY).unwrap();
+        assert!(0.0 < month && month < year && year < 1.0);
+        assert_eq!(p.age_t_of_days(365.0), year);
+
+        let (r, _, b) = rgb(p.color(0, 0, 3, 1.0, Some(0.0), false));
+        assert!(r > 200 && b + 80 < r, "new should be red");
+        let (r, _, b) = rgb(p.color(0, 0, 3, 1.0, Some(1.0), false));
+        assert!(b > 200 && r + 60 < b, "old should be blue");
+        assert_eq!(p.color(0, 0, 3, 1.0, None, true), p.unknown);
+        // Size and position do not matter, only the age.
+        assert_eq!(p.color(1, 0, 3, 1.0, Some(0.5), true), p.color(1, 1, 3, 0.1, Some(0.5), true));
     }
 }

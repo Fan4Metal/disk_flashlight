@@ -5,6 +5,7 @@
 use crate::model::{ItemKind, Metric};
 use crate::render::ColorMode;
 use crate::ui::SideView;
+use crate::ui::files::ListSort;
 
 const METRIC: &str = "metric";
 const COLOR_MODE: &str = "color_mode";
@@ -13,6 +14,9 @@ const LAST_PATH: &str = "last_path";
 const SIDE_VIEW: &str = "side_view";
 const SEARCH_WHOLE_WORD: &str = "search_whole_word";
 const SEARCH_KIND: &str = "search_kind";
+const SEARCH_SORT: &str = "search_sort";
+const FILES_SORT: &str = "files_sort";
+const FILES_OLDER_THAN: &str = "files_older_than";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
@@ -25,6 +29,12 @@ pub struct Settings {
     pub search_whole_word: bool,
     /// Search lists files, folders or both.
     pub search_kind: ItemKind,
+    /// Order of the search results.
+    pub search_sort: ListSort,
+    /// Order of the Largest files list.
+    pub files_sort: ListSort,
+    /// Largest files lists only files older than this many years (0: all).
+    pub files_older_than: u32,
     /// Path of the last scan, offered in the path field on the next start.
     pub last_path: Option<String>,
 }
@@ -38,6 +48,9 @@ impl Default for Settings {
             side_view: SideView::default(),
             search_whole_word: false,
             search_kind: ItemKind::All,
+            search_sort: ListSort::Size,
+            files_sort: ListSort::Size,
+            files_older_than: 0,
             last_path: None,
         }
     }
@@ -57,6 +70,7 @@ impl Settings {
             color_mode: match get(COLOR_MODE).as_deref() {
                 Some("size") => ColorMode::Size,
                 Some("depth") => ColorMode::Depth,
+                Some("age") => ColorMode::Age,
                 _ => d.color_mode,
             },
             follow_in_tree: match get(FOLLOW_IN_TREE).as_deref() {
@@ -81,6 +95,12 @@ impl Settings {
                 Some("folders") => ItemKind::Folders,
                 _ => d.search_kind,
             },
+            search_sort: get(SEARCH_SORT).as_deref().and_then(sort_from).unwrap_or(d.search_sort),
+            files_sort: get(FILES_SORT).as_deref().and_then(sort_from).unwrap_or(d.files_sort),
+            files_older_than: get(FILES_OLDER_THAN)
+                .and_then(|v| v.parse().ok())
+                .filter(|&y: &u32| y <= 100)
+                .unwrap_or(d.files_older_than),
             last_path: get(LAST_PATH).filter(|p| !p.is_empty()),
         }
     }
@@ -93,6 +113,7 @@ impl Settings {
         let color_mode = match self.color_mode {
             ColorMode::Size => "size",
             ColorMode::Depth => "depth",
+            ColorMode::Age => "age",
         };
         storage.set_string(METRIC, metric.into());
         storage.set_string(COLOR_MODE, color_mode.into());
@@ -110,7 +131,27 @@ impl Settings {
             ItemKind::Folders => "folders",
         };
         storage.set_string(SEARCH_KIND, search_kind.into());
+        storage.set_string(SEARCH_SORT, sort_name(self.search_sort).into());
+        storage.set_string(FILES_SORT, sort_name(self.files_sort).into());
+        storage.set_string(FILES_OLDER_THAN, self.files_older_than.to_string());
         storage.set_string(LAST_PATH, self.last_path.clone().unwrap_or_default());
+    }
+}
+
+fn sort_name(sort: ListSort) -> &'static str {
+    match sort {
+        ListSort::Size => "size",
+        ListSort::Oldest => "oldest",
+        ListSort::Newest => "newest",
+    }
+}
+
+fn sort_from(name: &str) -> Option<ListSort> {
+    match name {
+        "size" => Some(ListSort::Size),
+        "oldest" => Some(ListSort::Oldest),
+        "newest" => Some(ListSort::Newest),
+        _ => None,
     }
 }
 
@@ -140,11 +181,14 @@ mod tests {
     fn round_trip() {
         let s = Settings {
             metric: Metric::Logical,
-            color_mode: ColorMode::Depth,
+            color_mode: ColorMode::Age,
             follow_in_tree: false,
             side_view: SideView::LargestFiles,
             search_whole_word: true,
             search_kind: ItemKind::Folders,
+            search_sort: ListSort::Newest,
+            files_sort: ListSort::Oldest,
+            files_older_than: 5,
             last_path: Some(r"D:\Projects".into()),
         };
         let mut storage = MemStorage::default();
@@ -158,6 +202,8 @@ mod tests {
         let mut storage = MemStorage::default();
         storage.set_string(METRIC, "bogus".into());
         storage.set_string(FOLLOW_IN_TREE, "maybe".into());
+        storage.set_string(FILES_SORT, "sideways".into());
+        storage.set_string(FILES_OLDER_THAN, "-1".into());
         storage.set_string(LAST_PATH, String::new());
         assert_eq!(Settings::load(&storage), Settings::default());
     }

@@ -163,6 +163,27 @@ pub fn compressed_size(path: &Path) -> Option<u64> {
     Some(((high as u64) << 32) | low as u64)
 }
 
+/// Offset of local time from UTC in seconds, as Windows applies it now
+/// (daylight saving included), for showing dates the way Explorer does.
+pub fn utc_offset() -> i64 {
+    use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::Storage::FileSystem::FileTimeToLocalFileTime;
+    let ticks = (crate::model::unix_now() as u64 + 11_644_473_600) * 10_000_000;
+    let utc = FILETIME {
+        dwLowDateTime: ticks as u32,
+        dwHighDateTime: (ticks >> 32) as u32,
+    };
+    let mut local = FILETIME {
+        dwLowDateTime: 0,
+        dwHighDateTime: 0,
+    };
+    if unsafe { FileTimeToLocalFileTime(&utc, &mut local) } == 0 {
+        return 0;
+    }
+    let local = ((local.dwHighDateTime as u64) << 32) | local.dwLowDateTime as u64;
+    (local as i64 - ticks as i64) / 10_000_000
+}
+
 /// One entry of a directory listing.
 #[derive(Debug)]
 pub struct DirEntry {
@@ -172,6 +193,8 @@ pub struct DirEntry {
     pub reparse_tag: u32,
     /// Logical size (end of file).
     pub size: u64,
+    /// Last write time in Unix seconds, 0 if unknown.
+    pub modified: u32,
 }
 
 impl DirEntry {
@@ -267,6 +290,7 @@ fn parse_full_dir_info(buf: &[u8], out: &mut Vec<DirEntry>) {
                 // For reparse points the EA size field carries the tag.
                 reparse_tag: u32_at(pos + offset_of!(Info, EaSize)),
                 size: u64_at(pos + offset_of!(Info, EndOfFile)),
+                modified: crate::model::unix_from_filetime(u64_at(pos + offset_of!(Info, LastWriteTime))),
             });
         }
         let next = u32_at(pos + offset_of!(Info, NextEntryOffset)) as usize;
@@ -378,6 +402,9 @@ mod tests {
     use std::mem::offset_of;
     use windows_sys::Win32::Storage::FileSystem::FILE_FULL_DIR_INFO as Info;
 
+    /// 2024-01-01 00:00 UTC as a FILETIME, the write time of every entry.
+    const JAN_2024: u64 = 133_485_408_000_000_000;
+
     /// Chain `FILE_FULL_DIR_INFO` records the way the file system does:
     /// 8-byte aligned, the last one with `NextEntryOffset == 0`.
     fn records(entries: &[(&str, u32, u32, u64)]) -> Vec<u8> {
@@ -392,6 +419,7 @@ mod tests {
                 buf[start + off..start + off + bytes.len()].copy_from_slice(bytes)
             };
             put(offset_of!(Info, EndOfFile), &size.to_le_bytes());
+            put(offset_of!(Info, LastWriteTime), &JAN_2024.to_le_bytes());
             put(offset_of!(Info, FileAttributes), &attrs.to_le_bytes());
             put(offset_of!(Info, FileNameLength), &(2 * name.len() as u32).to_le_bytes());
             put(offset_of!(Info, EaSize), &ea.to_le_bytes());
@@ -426,6 +454,7 @@ mod tests {
         let names: Vec<&str> = out.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, ["a.txt", "Документы", "link", "app.exe"]);
         assert_eq!(out[0].size, 5);
+        assert_eq!(out[0].modified, 1_704_067_200);
         assert!(!out[0].is_dir() && !out[0].is_link());
         assert!(out[1].is_dir() && !out[1].is_link());
         // A junction is a link, not a directory to descend into.

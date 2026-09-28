@@ -125,6 +125,9 @@ impl App {
         app.tree.follow_hover = settings.follow_in_tree;
         app.search.whole_word = settings.search_whole_word;
         app.search.kind = settings.search_kind;
+        app.search.sort = settings.search_sort;
+        app.files.sort = settings.files_sort;
+        app.files.older_than = settings.files_older_than;
         if let Some(p) = initial {
             app.start_scan(p);
         }
@@ -281,7 +284,7 @@ impl App {
     }
 
     /// Carry out a context-menu command on an item of the current model.
-    fn run_command(&mut self, command: ItemCommand) {
+    fn run_command(&mut self, command: ItemCommand, ctx: &egui::Context) {
         let Some(model) = self.model.clone() else { return };
         match command {
             ItemCommand::OpenInExplorer(id) => {
@@ -292,6 +295,11 @@ impl App {
                 if !scan::win::show_properties(&path) {
                     self.status = format!("No properties available for {path}");
                 }
+            }
+            ItemCommand::CopyPath(id) => {
+                let path = model.path(id);
+                ctx.copy_text(path.clone());
+                self.status = format!("Copied {path}");
             }
             ItemCommand::Delete(id) if id != 0 => {
                 if self.deleting.is_some() {
@@ -458,6 +466,16 @@ impl App {
         if ctx.memory(|m| m.focused().is_some()) {
             return;
         }
+        // Ctrl+C arrives as a Copy event rather than as a key press.
+        let copy = ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Copy)));
+        if copy && let Some(m) = &self.model {
+            // The item under the mouse in the chart or a list, else the
+            // centre of the chart.
+            let id = self.chart.hovered.or(self.tree_hovered).unwrap_or(self.nav.root);
+            if (id as usize) < m.len() {
+                self.run_command(ItemCommand::CopyPath(id), ctx);
+            }
+        }
         let (back, fwd, up, rescan, about, find) = ctx.input(|i| {
             (
                 i.modifiers.matches_exact(Modifiers::ALT) && i.key_pressed(Key::ArrowLeft),
@@ -503,6 +521,9 @@ impl eframe::App for App {
             side_view: self.side,
             search_whole_word: self.search.whole_word,
             search_kind: self.search.kind,
+            search_sort: self.search.sort,
+            files_sort: self.files.sort,
+            files_older_than: self.files.older_than,
             last_path,
         }
         .save(storage);
@@ -602,7 +623,7 @@ impl eframe::App for App {
                 self.navigate(id);
             }
             if let Some(c) = a.command {
-                self.run_command(c);
+                self.run_command(c, &ctx);
             }
         }
 
@@ -624,7 +645,7 @@ impl eframe::App for App {
             ChartAction::None => {}
             ChartAction::Navigate(id) => self.navigate(id),
             ChartAction::Up => self.go_up(),
-            ChartAction::Command(c) => self.run_command(c),
+            ChartAction::Command(c) => self.run_command(c, &ctx),
         }
     }
 }

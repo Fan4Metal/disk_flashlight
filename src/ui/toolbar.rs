@@ -134,6 +134,7 @@ impl App {
             let label = |m: ColorMode| match m {
                 ColorMode::Size => "Colors: by size",
                 ColorMode::Depth => "Colors: by level",
+                ColorMode::Age => "Colors: by age",
             };
             egui::ComboBox::from_id_salt("color_mode")
                 .selected_text(label(mode))
@@ -142,6 +143,11 @@ impl App {
                         .on_hover_text("Largest item among its siblings in red, smaller ones towards yellow; paler further out");
                     ui.selectable_value(&mut mode, ColorMode::Depth, label(ColorMode::Depth))
                         .on_hover_text("Colour by ring: red in the centre towards yellow at the rim");
+                    ui.selectable_value(&mut mode, ColorMode::Age, label(ColorMode::Age))
+                        .on_hover_text(
+                            "Colour by the last change: red for recent, through yellow and green, \
+                             to blue for ten years or more; a folder by the newest item inside",
+                        );
                 });
             if mode != self.chart.palette.mode {
                 self.chart.palette.mode = mode;

@@ -29,6 +29,8 @@ pub const DANGER: Color32 = Color32::from_rgb(200, 40, 40);
 pub enum ItemCommand {
     OpenInExplorer(u32),
     Properties(u32),
+    /// Put the full path on the clipboard.
+    CopyPath(u32),
     /// Ask, then move to the Recycle Bin.
     Delete(u32),
 }
@@ -42,6 +44,9 @@ pub fn item_menu(ui: &mut Ui, id: u32) -> Option<ItemCommand> {
     }
     if ui.button("Properties").clicked() {
         command = Some(ItemCommand::Properties(id));
+    }
+    if ui.add(Button::new("Copy path").shortcut_text("Ctrl+C")).clicked() {
+        command = Some(ItemCommand::CopyPath(id));
     }
     ui.separator();
     let delete = Button::new(RichText::new("Delete…").color(DANGER));

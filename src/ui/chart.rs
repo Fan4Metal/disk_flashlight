@@ -8,10 +8,10 @@ use egui::{
     StrokeKind, Ui, Vec2, pos2, vec2,
 };
 
-use crate::format::{human_size, thousands};
+use crate::format::{ago, date, human_size, percent, thousands};
 use crate::layout::{self, Layout, LayoutParams, Sector};
-use crate::model::{Metric, Model};
-use crate::render::{self, Palette};
+use crate::model::{Metric, Model, Node};
+use crate::render::{self, ColorMode, Palette};
 use crate::scan::win::DiskSpace;
 use crate::ui::{ItemCommand, item_menu};
 
@@ -224,6 +224,10 @@ impl ChartView {
             Color32::from_gray(235),
         );
 
+        if self.palette.mode == ColorMode::Age {
+            age_legend(&painter, rect, &self.palette);
+        }
+
         // "Reset view" button in the corner, while zoomed or panned; the
         // chart underneath gets neither its hover nor its clicks.
         let reset = (self.zoom != 1.0 || self.pan != Vec2::ZERO).then(|| reset_button(ui, rect, self.zoom));
@@ -330,30 +334,36 @@ impl ChartView {
             )
             .show(|ui| {
                 ui.set_max_width(360.0);
+                // Three tiers: the name large, the numbers in plain text,
+                // where it is and what a click does faint, with a gap
+                // between them.
+                ui.spacing_mut().item_spacing.y = 2.0;
                 if s.is_free() {
-                    ui.strong("Free space");
+                    tooltip_title(ui, "Free space");
                     let total = disk.map_or(0, |d| d.total);
-                    let share = s.group_size as f64 / total.max(1) as f64 * 100.0;
-                    ui.label(format!("{} ({share:.0}% of {})", human_size(s.group_size), human_size(total)));
+                    size_line(ui, s.group_size, None);
+                    ui.label(format!("{} of {}", percent(s.group_size, total), human_size(total)));
                 } else if s.is_group() {
-                    ui.strong(format!("{} smaller items", thousands(s.count as u64)));
-                    ui.label(human_size(s.group_size));
+                    tooltip_title(ui, &format!("{} smaller items", thousands(s.count as u64)));
+                    size_line(ui, s.group_size, None);
+                    ui.label(shares(model, root, s.node, s.group_size, metric));
                     matches_line(ui, model, layout, &s, hits);
+                    ui.add_space(TOOLTIP_GAP);
                     ui.weak(format!("in {}", model.path(s.node)));
                     ui.weak("Click or scroll to zoom in");
                 } else {
                     let n = model.node(s.node);
-                    ui.strong(model.name(s.node));
-                    ui.label(format!(
-                        "{} ({})",
-                        human_size(n.size),
-                        human_size(n.alloc)
-                    ));
-                    if n.is_dir {
-                        ui.label(format!("Dirs: {}", thousands(n.dirs as u64)));
-                        ui.label(format!("Files: {}", thousands(n.files as u64)));
+                    tooltip_title(ui, model.name(s.node));
+                    size_line(ui, n.size, Some(n.alloc));
+                    ui.label(shares(model, root, n.parent, n.metric(metric), metric));
+                    if let Some(line) = modified_line(model, n) {
+                        ui.label(line);
                     }
                     matches_line(ui, model, layout, &s, hits);
+                    ui.add_space(TOOLTIP_GAP);
+                    if n.is_dir {
+                        ui.weak(counts(n.files, n.dirs));
+                    }
                     ui.weak(model.path(s.node));
                     if !n.is_dir && n.parent != root {
                         ui.weak("Click to open its folder");
@@ -408,6 +418,112 @@ fn reset_button(ui: &mut Ui, rect: Rect, zoom: f32) -> Response {
         color,
     );
     resp
+}
+
+/// Space between the tiers of the tooltip, in points.
+const TOOLTIP_GAP: f32 = 5.0;
+
+/// The tooltip's first line, larger than the rest.
+fn tooltip_title(ui: &mut Ui, text: &str) {
+    ui.label(egui::RichText::new(text).size(17.0).strong());
+    ui.add_space(2.0);
+}
+
+/// `75.9 GB` in bold and, when it differs, the space taken on disk.
+fn size_line(ui: &mut Ui, size: u64, alloc: Option<u64>) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        ui.label(egui::RichText::new(human_size(size)).size(15.0).strong());
+        if let Some(alloc) = alloc.filter(|&a| human_size(a) != human_size(size)) {
+            ui.weak(format!("{} on disk", human_size(alloc)));
+        }
+    });
+}
+
+/// `1 234 files in 56 folders`, or `14 files` without subfolders.
+fn counts(files: u32, dirs: u32) -> String {
+    let files = match files {
+        1 => "1 file".to_string(),
+        n => format!("{} files", thousands(n as u64)),
+    };
+    match dirs {
+        0 => files,
+        1 => format!("{files} in 1 folder"),
+        n => format!("{files} in {} folders", thousands(n as u64)),
+    }
+}
+
+/// Tooltip line with the share `part` bytes take of `parent` and, deeper
+/// in, of the centre `root`: `12% of Users, 3.4% of C:`.
+fn shares(model: &Model, root: u32, parent: u32, part: u64, metric: Metric) -> String {
+    let of = |id: u32| format!("{} of {}", percent(part, model.node(id).metric(metric)), model.name(id));
+    if parent == root {
+        of(root)
+    } else {
+        format!("{}, {}", of(parent), of(root))
+    }
+}
+
+/// `Modified: 2024-03-15 (5 months ago)` for a file; a folder gives the
+/// newest time inside it. `None` when the time is unknown.
+pub fn modified_line(model: &Model, n: &Node) -> Option<String> {
+    (n.modified != 0).then(|| {
+        let label = if n.is_dir { "Last change inside" } else { "Modified" };
+        let age = ago(model.scanned_at.saturating_sub(n.modified));
+        format!("{label}: {} ({age})", date(n.modified))
+    })
+}
+
+/// Colour scale of the age mode in the bottom left corner of the chart
+/// `rect`, on a light backing so that it reads over the sectors.
+fn age_legend(painter: &egui::Painter, rect: Rect, palette: &Palette) {
+    const WIDTH: f32 = 220.0;
+    const BAR: f32 = 10.0;
+    let text = Color32::from_gray(80);
+    let small = FontId::proportional(11.0);
+    let backing = Rect::from_min_size(
+        pos2(rect.left() + 8.0, rect.bottom() - 58.0),
+        vec2(WIDTH + 24.0, 50.0),
+    );
+    painter.rect_filled(backing, 4.0, Color32::from_white_alpha(215));
+    let left = backing.left() + 12.0;
+    painter.text(
+        pos2(left, backing.top() + 5.0),
+        Align2::LEFT_TOP,
+        "Last modified",
+        FontId::proportional(12.0),
+        text,
+    );
+    let bar = Rect::from_min_size(pos2(left, backing.top() + 22.0), vec2(WIDTH, BAR));
+    let mut mesh = Mesh::default();
+    const STEPS: u32 = 48;
+    for i in 0..=STEPS {
+        let t = i as f32 / STEPS as f32;
+        let color = palette.age_color(t, palette.sat_dir);
+        let x = bar.left() + WIDTH * t;
+        mesh.colored_vertex(pos2(x, bar.top()), color);
+        mesh.colored_vertex(pos2(x, bar.bottom()), color);
+        if i > 0 {
+            let v = 2 * i;
+            mesh.add_triangle(v - 2, v - 1, v);
+            mesh.add_triangle(v - 1, v + 1, v);
+        }
+    }
+    painter.add(Shape::mesh(mesh));
+    let ticks = [(0.0, "now"), (7.0, "week"), (30.0, "month"), (365.0, "year"), (3650.0, "10 years")];
+    for (days, label) in ticks {
+        let x = bar.left() + WIDTH * palette.age_t_of_days(days);
+        painter.line_segment(
+            [pos2(x, bar.bottom()), pos2(x, bar.bottom() + 3.0)],
+            Stroke::new(1.0, text),
+        );
+        let align = match label {
+            "now" => Align2::LEFT_TOP,
+            "10 years" => Align2::RIGHT_TOP,
+            _ => Align2::CENTER_TOP,
+        };
+        painter.text(pos2(x, bar.bottom() + 3.0), align, label, small.clone(), text);
+    }
 }
 
 /// Tooltip line with how much of sector `s` the search matches, while they

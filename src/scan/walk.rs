@@ -72,11 +72,18 @@ pub fn scan(root: &Path, progress: &Progress) -> anyhow::Result<Model> {
     let root_path = root.to_string_lossy().into_owned();
     let cluster = super::win::cluster_size(root);
     let name = root_display_name(root);
-    let raw = scan_dir(root, name, cluster, progress);
+    let modified = meta.modified().ok().map_or(0, unix_time);
+    let raw = scan_dir(root, name, modified, cluster, progress);
     if progress.cancel.load(Relaxed) {
         anyhow::bail!("scan cancelled");
     }
     Ok(Model::from_raw(raw, root_path, cluster))
+}
+
+/// `t` as Unix seconds, 0 before 1970.
+fn unix_time(t: std::time::SystemTime) -> u32 {
+    t.duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs().min(u32::MAX as u64) as u32)
 }
 
 fn root_display_name(root: &Path) -> String {
@@ -95,9 +102,12 @@ fn round_up(size: u64, cluster: u64) -> u64 {
     }
 }
 
-fn scan_dir(path: &Path, name: String, cluster: u64, progress: &Progress) -> RawDir {
+/// `modified` is the folder's own last write time, from its parent's
+/// listing.
+fn scan_dir(path: &Path, name: String, modified: u32, cluster: u64, progress: &Progress) -> RawDir {
     let mut dir = RawDir {
         name,
+        modified,
         ..Default::default()
     };
     if progress.cancel.load(Relaxed) {
@@ -117,7 +127,7 @@ fn scan_dir(path: &Path, name: String, cluster: u64, progress: &Progress) -> Raw
         }
     }
 
-    let mut subdirs: Vec<(PathBuf, String)> = Vec::new();
+    let mut subdirs: Vec<(PathBuf, String, u32)> = Vec::new();
     let mut bytes = 0u64;
     for e in entries {
         // Symlinks and junctions are skipped to avoid cycles / double counting.
@@ -125,7 +135,7 @@ fn scan_dir(path: &Path, name: String, cluster: u64, progress: &Progress) -> Raw
             continue;
         }
         if e.is_dir() {
-            subdirs.push((path.join(&e.name), e.name));
+            subdirs.push((path.join(&e.name), e.name, e.modified));
             continue;
         }
         let alloc = if e.attrs & (FILE_ATTRIBUTE_COMPRESSED | FILE_ATTRIBUTE_SPARSE_FILE) != 0 {
@@ -140,6 +150,7 @@ fn scan_dir(path: &Path, name: String, cluster: u64, progress: &Progress) -> Raw
             name: e.name,
             size: e.size,
             alloc,
+            modified: e.modified,
         });
     }
 
@@ -152,7 +163,7 @@ fn scan_dir(path: &Path, name: String, cluster: u64, progress: &Progress) -> Raw
     }
     dir.subdirs = subdirs
         .into_par_iter()
-        .map(|(p, n)| scan_dir(&p, n, cluster, progress))
+        .map(|(p, n, t)| scan_dir(&p, n, t, cluster, progress))
         .collect();
     dir
 }

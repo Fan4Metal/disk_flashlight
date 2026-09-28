@@ -5,13 +5,13 @@
 use std::ops::Range;
 
 use egui::{
-    Align2, Color32, CursorIcon, FontId, Key, Margin, Pos2, Rect, Response, ScrollArea, Sense, Shape,
-    Stroke, Ui, Vec2, pos2, vec2,
+    Align, Align2, Color32, CursorIcon, FontId, Key, Layout, Margin, Pos2, Rect, Response, RichText,
+    ScrollArea, Sense, Shape, Stroke, Ui, Vec2, pos2, vec2,
 };
 
 use crate::format::{human_size, thousands};
 use crate::model::{ItemKind, Metric, Model, match_ranges};
-use crate::ui::files::{ROW_HEIGHT, folder_under, item_row};
+use crate::ui::files::{ListSort, ROW_HEIGHT, folder_under, item_row, sort_combo};
 use crate::ui::item_menu;
 use crate::ui::tree::TreeAction;
 
@@ -27,6 +27,10 @@ pub struct SearchView {
     pub whole_word: bool,
     /// Files, folders or both (kept in the settings).
     pub kind: ItemKind,
+    /// Order of the rows (kept in the settings).
+    pub sort: ListSort,
+    /// Order the rows are in now; `None` right after a search.
+    sorted_by: Option<ListSort>,
     /// `(query, metric, whole_word, kind)` the rows were built for.
     key: Option<(String, Metric, bool, ItemKind)>,
     count: usize,
@@ -36,8 +40,8 @@ pub struct SearchView {
     hits: Vec<u64>,
     /// Bumped whenever `hits` changes; never 0 once searched.
     generation: u64,
-    /// Largest first: item id, its folder relative to the scan root and
-    /// the parts of its name that match.
+    /// The largest matches in the order `sorted_by`: item id, its folder
+    /// relative to the scan root and the parts of its name that match.
     rows: Vec<(u32, String, Vec<Range<usize>>)>,
     selected: Option<u32>,
 }
@@ -50,6 +54,7 @@ impl SearchView {
             query: std::mem::take(&mut self.query),
             whole_word: self.whole_word,
             kind: self.kind,
+            sort: self.sort,
             generation: self.generation,
             ..Self::default()
         };
@@ -138,6 +143,7 @@ impl SearchView {
                 })
                 .collect();
             self.key = Some((self.query.clone(), metric, self.whole_word, self.kind));
+            self.sorted_by = None;
         }
 
         let mut action = TreeAction::default();
@@ -154,19 +160,34 @@ impl SearchView {
             1 => format!("1 match ({})", human_size(self.total)),
             n => format!("{} matches ({})", thousands(n as u64), human_size(self.total)),
         };
-        ui.weak(if self.count > LIMIT {
+        let summary = if self.count > LIMIT {
             format!("{summary}, the {LIMIT} largest shown")
         } else {
             summary
-        })
-        .on_hover_text("Total size of the matches; files inside a matching folder count once");
+        };
+        ui.horizontal(|ui| {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                sort_combo(ui, "search_sort", &mut self.sort);
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    ui.add(egui::Label::new(RichText::new(&summary).weak()).truncate())
+                        .on_hover_text(format!(
+                            "{summary}\nTotal size of the matches; files inside a matching folder count once"
+                        ));
+                });
+            });
+        });
+        if self.sorted_by != Some(self.sort) {
+            self.sort.apply(model, metric, &mut self.rows, |r| r.0);
+            self.sorted_by = Some(self.sort);
+        }
+        let show_date = self.sort != ListSort::Size;
         ScrollArea::vertical()
             .auto_shrink([false, false])
             .show_rows(ui, ROW_HEIGHT, self.rows.len(), |ui, range| {
                 for (id, folder, marks) in &self.rows[range] {
                     let id = *id;
                     let highlighted = Some(id) == self.selected || Some(id) == chart_hovered;
-                    let row = item_row(ui, model, id, folder, marks, metric, highlighted);
+                    let row = item_row(ui, model, id, folder, marks, metric, highlighted, show_date);
                     if row.clicked() {
                         self.selected = Some(id);
                         let n = model.node(id);

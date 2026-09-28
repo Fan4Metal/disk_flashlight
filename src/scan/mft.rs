@@ -33,6 +33,7 @@ const USA_STRIDE: usize = 512;
 /// Bytes read from the volume per I/O request.
 const READ_CHUNK: usize = 8 << 20;
 
+const ATTR_STANDARD_INFORMATION: u32 = 0x10;
 const ATTR_ATTRIBUTE_LIST: u32 = 0x20;
 const ATTR_FILE_NAME: u32 = 0x30;
 const ATTR_DATA: u32 = 0x80;
@@ -378,6 +379,9 @@ pub(crate) struct Rec {
     has_data: bool,
     size: u64,
     alloc: u64,
+    /// Last write time from `$STANDARD_INFORMATION` (always in the base
+    /// record), Unix seconds.
+    modified: u32,
 }
 
 pub(crate) fn parse_record(raw: &mut [u8]) -> Rec {
@@ -395,6 +399,14 @@ pub(crate) fn parse_record(raw: &mut [u8]) -> Rec {
 
     for a in attributes(raw) {
         match a.kind {
+            // Its times are kept up to date, unlike the copies in
+            // `$FILE_NAME`, which change only with the name.
+            ATTR_STANDARD_INFORMATION if !a.non_resident => {
+                let v = a.value();
+                if v.len() >= 0x10 {
+                    r.modified = crate::model::unix_from_filetime(u64le(v, 0x08));
+                }
+            }
             ATTR_FILE_NAME if !a.non_resident => {
                 let v = a.value();
                 if v.len() < 0x42 {
@@ -510,6 +522,7 @@ fn build_tree(mut recs: Vec<Rec>, names: &[String], root_name: String) -> Option
     fn build(recs: &mut [Rec], start: &[u32], kids: &[u32], id: usize, name: String, depth: u32) -> RawDir {
         let mut d = RawDir {
             name,
+            modified: recs[id].modified,
             ..Default::default()
         };
         // Guard against corrupted parent links forming deep chains.
@@ -527,6 +540,7 @@ fn build_tree(mut recs: Vec<Rec>, names: &[String], root_name: String) -> Option
                     name,
                     size: r.size,
                     alloc: r.alloc,
+                    modified: r.modified,
                 });
             }
         }
@@ -725,6 +739,17 @@ mod tests {
         resident(ATTR_FILE_NAME, &v)
     }
 
+    /// `$STANDARD_INFORMATION` with last write time `ft` (a FILETIME) and
+    /// the other times set apart from it.
+    fn std_info(ft: u64) -> Vec<u8> {
+        let mut v = vec![0u8; 0x48];
+        v[0x00..0x08].copy_from_slice(&1u64.to_le_bytes());
+        v[0x08..0x10].copy_from_slice(&ft.to_le_bytes());
+        v[0x10..0x18].copy_from_slice(&2u64.to_le_bytes());
+        v[0x18..0x20].copy_from_slice(&3u64.to_le_bytes());
+        resident(ATTR_STANDARD_INFORMATION, &v)
+    }
+
     fn resident(kind: u32, value: &[u8]) -> Vec<u8> {
         let len = (0x18 + value.len()).div_ceil(8) * 8;
         let mut a = vec![0u8; len];
@@ -758,6 +783,7 @@ mod tests {
             REC_IN_USE,
             0,
             &[
+                std_info(133_485_408_000_000_000),
                 file_name_attr(5 | (3 << 48), "LONGNA~1.TXT", NS_DOS),
                 file_name_attr(5 | (3 << 48), "long name.txt", 1),
                 non_resident_data(10_000, 12_288, None),
@@ -768,6 +794,7 @@ mod tests {
         assert_eq!(p.parent, 5);
         assert_eq!(p.name.as_deref(), Some("long name.txt"));
         assert_eq!((p.size, p.alloc), (10_000, 12_288));
+        assert_eq!(p.modified, 1_704_067_200);
 
         let mut r = record(
             REC_IN_USE,
@@ -807,7 +834,7 @@ mod tests {
         let mut raw: Vec<Vec<u8>> = (0..10).map(|_| vec![0u8; 1024]).collect();
         raw[5] = record(dir, 0, &[file_name_attr(5, ".", 3)]);
         raw[6] = record(dir, 0, &[file_name_attr(5, "Users", 1)]);
-        raw[7] = record(REC_IN_USE, 0, &[file_name_attr(6, "big.bin", 1)]);
+        raw[7] = record(REC_IN_USE, 0, &[std_info(133_485_408_000_000_000), file_name_attr(6, "big.bin", 1)]);
         // Extension record of 7 carrying its $DATA.
         raw[8] = record(REC_IN_USE, 7, &[non_resident_data(5000, 8192, None)]);
         raw[9] = record(REC_IN_USE, 0, &[
@@ -825,6 +852,8 @@ mod tests {
         let first = m.children(0).next().unwrap();
         assert_eq!(m.name(first), "Users");
         assert_eq!(m.path(m.children(first).next().unwrap()), "X:\\Users\\big.bin");
+        // The folder takes the time of the file in it.
+        assert_eq!(m.node(first).modified, 1_704_067_200);
 
         // A folder is found by name, ignoring case, and becomes the root.
         let sub = build_tree(recs.clone(), &["users".into()], "Users".into()).unwrap();
