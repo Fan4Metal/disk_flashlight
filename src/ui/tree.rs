@@ -62,7 +62,8 @@ pub struct TreeView {
     /// is outside the visible part.
     ensure_visible: Option<u32>,
     /// Directory last hovered in the chart; its collapsed ancestors are in
-    /// `peek`, expanded temporarily until the next hovered directory.
+    /// `peek`, expanded temporarily until another directory is hovered or
+    /// the pointer rests on the chart off the sectors.
     peek_target: Option<u32>,
     peek: Vec<u32>,
     /// Scroll offset and height of the list during the last frame.
@@ -129,6 +130,27 @@ impl TreeView {
         self.ensure_visible = Some(id);
     }
 
+    /// Follow the chart: peek at the directory of the hovered item; with
+    /// the pointer on the chart but on no sector (empty space, the centre),
+    /// drop the peek as if the centre were hovered. Off the chart the peek
+    /// stays, so that the pointer can move into the tree to use it.
+    fn follow(&mut self, model: &Model, current_root: u32, hovered_dir: Option<u32>, over_chart: bool) {
+        if !self.follow_hover {
+            if self.peek_target.take().is_some() {
+                self.peek.clear();
+                self.dirty = true;
+            }
+        } else if let Some(d) = hovered_dir {
+            if self.peek_target != Some(d) {
+                self.peek_at(model, d);
+            }
+        } else if over_chart && self.peek_target.take().is_some() {
+            self.peek.clear();
+            self.dirty = true;
+            self.ensure_visible = Some(current_root);
+        }
+    }
+
     fn is_expanded(&self, id: u32) -> bool {
         self.expanded.contains(&id) || self.peek.contains(&id)
     }
@@ -168,22 +190,14 @@ impl TreeView {
         current_root: u32,
         metric: Metric,
         chart_hovered: Option<u32>,
+        over_chart: bool,
     ) -> TreeAction {
         // The tree lists directories only: a hovered file shows its folder.
         let hovered_dir = chart_hovered.map(|id| {
             let n = model.node(id);
             if n.is_dir { id } else { n.parent }
         });
-        if !self.follow_hover {
-            if self.peek_target.take().is_some() {
-                self.peek.clear();
-                self.dirty = true;
-            }
-        } else if let Some(d) = hovered_dir
-            && self.peek_target != Some(d)
-        {
-            self.peek_at(model, d);
-        }
+        self.follow(model, current_root, hovered_dir, over_chart);
         if self.dirty || self.sorted_by != Some(metric) {
             self.rebuild(model, metric);
         }
@@ -308,5 +322,40 @@ mod tests {
         // Up to a: a1 collapses again.
         t.reveal(&m, id(&["a"]));
         assert_eq!(rows(&mut t, &m), ["root", "a", "a1", "a2", "b"]);
+    }
+
+    #[test]
+    fn peek_follows_the_chart_and_folds_off_the_sectors() {
+        let raw = dir(
+            "root",
+            1,
+            vec![
+                dir("a", 30, vec![dir("a1", 20, vec![dir("deep", 1, vec![])])]),
+                dir("b", 5, vec![dir("b1", 1, vec![])]),
+            ],
+        );
+        let m = Model::from_raw(raw, "X:\\".into(), 1);
+        let id = |path: &[&str]| m.find_dir(path);
+        let mut t = TreeView::default();
+        let peeked = ["root", "a", "a1", "deep", "b"];
+
+        // Hovering "deep" opens its ancestors.
+        t.follow(&m, 0, Some(id(&["a", "a1", "deep"])), true);
+        assert_eq!(rows(&mut t, &m), peeked);
+        // Off the chart (on the way to the tree) the peek stays.
+        t.follow(&m, 0, None, false);
+        assert_eq!(rows(&mut t, &m), peeked);
+        // On the chart but on no sector it folds back to the centre.
+        t.follow(&m, 0, None, true);
+        assert_eq!(rows(&mut t, &m), ["root", "a", "b"]);
+        assert_eq!(t.ensure_visible, Some(0));
+
+        // Another directory replaces the peek; turning Follow off drops it.
+        t.follow(&m, 0, Some(id(&["a", "a1", "deep"])), true);
+        t.follow(&m, 0, Some(id(&["b", "b1"])), true);
+        assert_eq!(rows(&mut t, &m), ["root", "a", "b", "b1"]);
+        t.follow_hover = false;
+        t.follow(&m, 0, Some(id(&["a", "a1", "deep"])), true);
+        assert_eq!(rows(&mut t, &m), ["root", "a", "b"]);
     }
 }

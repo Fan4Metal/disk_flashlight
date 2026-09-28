@@ -50,6 +50,8 @@ pub struct ChartView {
     pub pan: Vec2,
     /// Single item under the mouse during the last frame (not groups).
     pub hovered: Option<u32>,
+    /// Whether the pointer was over the chart during the last frame.
+    pub pointer_inside: bool,
     /// Node whose context menu is open (right-clicked sector or the root).
     menu_node: Option<u32>,
     /// Root the current zoom/pan belongs to; a new root resets the view.
@@ -67,6 +69,7 @@ impl Default for ChartView {
             zoom: 1.0,
             pan: Vec2::ZERO,
             hovered: None,
+            pointer_inside: false,
             menu_node: None,
             view_root: None,
             layout: None,
@@ -226,6 +229,7 @@ impl ChartView {
             None => pointer.and_then(|p| layout.hit_test(p)),
         };
         let hit_sector: Option<Sector> = hit.map(|(ring, i)| layout.rings[ring][i]);
+        self.pointer_inside = response.contains_pointer();
         self.hovered = match self.menu_node {
             Some(n) => Some(n),
             None => hit_sector.filter(|s| s.is_item()).map(|s| s.node),

@@ -360,7 +360,10 @@ impl eframe::App for App {
                 ui.separator();
                 let (root, metric, hovered) = (self.nav.root, self.metric, self.chart.hovered);
                 tree_action = Some(match self.side {
-                    SideView::Folders => self.tree.show(ui, &model, root, metric, hovered),
+                    SideView::Folders => {
+                        self.tree
+                            .show(ui, &model, root, metric, hovered, self.chart.pointer_inside)
+                    }
                     SideView::LargestFiles => self.files.show(ui, &model, root, metric, hovered),
                     SideView::Search => self.search.show(ui, &model, metric, hovered),
                 });
