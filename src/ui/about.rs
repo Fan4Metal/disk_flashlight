@@ -1,6 +1,6 @@
 //! "About" dialog: icon, name, version, a short description and links.
 
-use egui::{Align, Layout, TextureHandle, TextureOptions, Ui};
+use egui::{Align, Layout, TextureHandle, Ui};
 
 use crate::VERSION;
 
@@ -21,17 +21,7 @@ impl AboutDialog {
         if !self.open {
             return;
         }
-        let icon = self
-            .icon
-            .get_or_insert_with(|| {
-                let px = (ICON_SIZE * ctx.pixels_per_point()).round() as u32;
-                let image = egui::ColorImage::from_rgba_unmultiplied(
-                    [px as usize, px as usize],
-                    &crate::icon::rgba(px),
-                );
-                ctx.load_texture("about_icon", image, TextureOptions::LINEAR)
-            })
-            .clone();
+        let icon = super::app_icon(ctx, ICON_SIZE, &mut self.icon);
 
         let modal = egui::Modal::new(egui::Id::new("about")).show(ctx, |ui| {
             ui.set_width(340.0);

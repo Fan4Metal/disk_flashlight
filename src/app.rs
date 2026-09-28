@@ -53,6 +53,8 @@ pub struct App {
     deleting: Option<Deleting>,
     /// "Choose folder…" was picked: open the folder dialog.
     pub choose_folder: bool,
+    /// Icon of the start screen, rasterised on first show.
+    start_icon: Option<egui::TextureHandle>,
 }
 
 /// A move to the Recycle Bin in progress.
@@ -113,6 +115,7 @@ impl App {
             confirm_delete: None,
             deleting: None,
             choose_folder: false,
+            start_icon: None,
         };
         app.chart.palette.mode = settings.color_mode;
         app.tree.follow_hover = settings.follow_in_tree;
@@ -535,8 +538,16 @@ impl eframe::App for App {
                     });
                 }
                 None => {
-                    ui.centered_and_justified(|ui| {
-                        ui.heading("Select a drive or enter a path to begin");
+                    // Start screen: the icon, the name and what to do.
+                    let icon = crate::ui::app_icon(ui.ctx(), START_ICON, &mut self.start_icon);
+                    ui.vertical_centered(|ui| {
+                        ui.add_space((ui.available_height() * 0.5 - START_ICON).max(0.0));
+                        ui.image((icon.id(), egui::vec2(START_ICON, START_ICON)));
+                        ui.add_space(14.0);
+                        ui.label(egui::RichText::new("Disk Flashlight").size(30.0).strong());
+                        ui.weak(format!("Version {}", crate::VERSION));
+                        ui.add_space(18.0);
+                        ui.label("Select a drive, choose a folder or enter a path to begin");
                     });
                 }
             });
@@ -599,6 +610,9 @@ impl eframe::App for App {
         }
     }
 }
+
+/// Size of the icon on the start screen, in points.
+const START_ICON: f32 = 112.0;
 
 /// Whether two paths name the same folder, ignoring case and a trailing
 /// backslash (`D:\` and `d:`).
