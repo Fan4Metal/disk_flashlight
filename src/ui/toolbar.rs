@@ -23,6 +23,7 @@ impl App {
                 None => "—".into(),
             };
             let mut pick: Option<String> = None;
+            let mut pick_folder: Option<String> = None;
             egui::ComboBox::from_id_salt("drive")
                 .selected_text(selected_text)
                 .width(160.0)
@@ -39,6 +40,28 @@ impl App {
                             pick = Some(d.root.clone());
                         }
                     }
+                    if !self.recent.is_empty() {
+                        ui.separator();
+                        ui.weak("Recent folders");
+                        let current = self.model.as_ref().map(|m| m.root_path.as_str());
+                        for path in &self.recent {
+                            let selected = current == Some(path.as_str());
+                            if ui
+                                .selectable_label(selected, elide_middle(path, RECENT_CHARS))
+                                .on_hover_text(path)
+                                .clicked()
+                            {
+                                pick_folder = Some(path.clone());
+                            }
+                        }
+                        if ui
+                            .selectable_label(false, egui::RichText::new("Clear recent").weak())
+                            .on_hover_text("Forget the recent folders")
+                            .clicked()
+                        {
+                            self.recent.clear();
+                        }
+                    }
                     ui.separator();
                     if ui
                         .selectable_label(false, "Choose folder…")
@@ -52,6 +75,12 @@ impl App {
             if let Some(root) = pick {
                 self.start_scan(PathBuf::from(&root));
                 self.drive = Some(root);
+            }
+            // As if typed in the path field: a folder that is gone is
+            // reported and the results on screen stay.
+            if let Some(path) = pick_folder {
+                self.custom_path = path.clone();
+                self.start_scan(PathBuf::from(path));
             }
 
             let scanning = self.scan.is_some();
@@ -241,6 +270,23 @@ impl App {
     }
 }
 
+/// Longest recent folder shown in full in the drive picker, in characters.
+const RECENT_CHARS: usize = 60;
+
+/// `s` with its middle replaced by `…` if it is longer than `max`
+/// characters, so that both the drive and the folder name stay visible.
+fn elide_middle(s: &str, max: usize) -> String {
+    let n = s.chars().count();
+    if n <= max {
+        return s.to_string();
+    }
+    let head = (max - 1) / 2;
+    let tail = max - 1 - head;
+    let start: String = s.chars().take(head).collect();
+    let end: String = s.chars().skip(n - tail).collect();
+    format!("{start}…{end}")
+}
+
 /// The theme switch: a half-filled circle while following Windows, a sun
 /// for the light theme, a moon for the dark one; a click moves on to the
 /// next of the three.
@@ -320,4 +366,18 @@ fn paint_uac_shield(painter: &egui::Painter, rect: egui::Rect) {
         shield,
         Stroke::new(1.0, Color32::from_rgb(20, 50, 110)),
     ));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::elide_middle;
+
+    #[test]
+    fn elides_the_middle() {
+        assert_eq!(elide_middle(r"D:\Projects", 20), r"D:\Projects");
+        let long = r"D:\Projects\video_converter\samples\клипы";
+        let short = elide_middle(long, 21);
+        assert_eq!(short.chars().count(), 21);
+        assert_eq!(short, r"D:\Project…ples\клипы");
+    }
 }

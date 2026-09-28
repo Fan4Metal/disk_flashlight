@@ -60,6 +60,23 @@ pub struct App {
     pub path_edit: PathField,
     /// Icon of the start screen, rasterised on first show.
     start_icon: Option<egui::TextureHandle>,
+    /// Folders scanned recently, newest first, offered in the drive picker.
+    pub recent: Vec<String>,
+}
+
+/// Number of folders kept in [`App::recent`].
+pub const MAX_RECENT: usize = 8;
+
+/// Put `path` at the front of the recent folders `list`, dropping an older
+/// entry for the same folder and anything past [`MAX_RECENT`]. Drive roots
+/// are left out: the drive picker lists them anyway.
+pub fn push_recent(list: &mut Vec<String>, path: &str) {
+    if path.is_empty() || drive_root_of(path).is_some() {
+        return;
+    }
+    list.retain(|p| !same_path(p, path));
+    list.insert(0, path.to_string());
+    list.truncate(MAX_RECENT);
 }
 
 /// A move to the Recycle Bin in progress.
@@ -123,6 +140,7 @@ impl App {
             choose_folder: false,
             path_edit: PathField::default(),
             start_icon: None,
+            recent: settings.recent,
         };
         app.chart.palette.mode = settings.color_mode;
         app.tree.follow_hover = settings.follow_in_tree;
@@ -249,8 +267,9 @@ impl App {
                     log::info!("MFT fallback: {reason}");
                 }
                 // Reflect the scanned volume in the drive picker; a folder
-                // scan shows no drive there.
+                // scan shows no drive there, but joins the recent folders.
                 self.drive = drive_root_of(&model.root_path);
+                push_recent(&mut self.recent, &model.root_path);
                 self.set_model(model);
                 self.scan = None;
             }
@@ -529,6 +548,7 @@ impl eframe::App for App {
             files_sort: self.files.sort,
             files_older_than: self.files.older_than,
             last_path,
+            recent: self.recent.clone(),
         }
         .save(storage);
     }
@@ -695,7 +715,23 @@ pub fn quote_arg(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{drive_root_of, quote_arg, same_path};
+    use super::{MAX_RECENT, drive_root_of, push_recent, quote_arg, same_path};
+
+    #[test]
+    fn recent_folders() {
+        let mut list = Vec::new();
+        push_recent(&mut list, r"D:\Projects");
+        push_recent(&mut list, r"D:\Films");
+        // A drive root is not kept, the same folder moves to the front.
+        push_recent(&mut list, r"C:\");
+        push_recent(&mut list, r"d:\projects\");
+        assert_eq!(list, [r"d:\projects\", r"D:\Films"]);
+        for i in 0..20 {
+            push_recent(&mut list, &format!(r"E:\f{i}"));
+        }
+        assert_eq!(list.len(), MAX_RECENT);
+        assert_eq!(list[0], r"E:\f19");
+    }
 
     #[test]
     fn drive_roots() {

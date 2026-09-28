@@ -12,6 +12,7 @@ const THEME: &str = "theme";
 const COLOR_MODE: &str = "color_mode";
 const FOLLOW_IN_TREE: &str = "follow_in_tree";
 const LAST_PATH: &str = "last_path";
+const RECENT_PATHS: &str = "recent_paths";
 const SIDE_VIEW: &str = "side_view";
 const SEARCH_WHOLE_WORD: &str = "search_whole_word";
 const SEARCH_KIND: &str = "search_kind";
@@ -40,6 +41,8 @@ pub struct Settings {
     pub files_older_than: u32,
     /// Path of the last scan, offered in the path field on the next start.
     pub last_path: Option<String>,
+    /// Folders scanned recently, newest first (the drive picker).
+    pub recent: Vec<String>,
 }
 
 impl Default for Settings {
@@ -56,6 +59,7 @@ impl Default for Settings {
             files_sort: ListSort::Size,
             files_older_than: 0,
             last_path: None,
+            recent: Vec::new(),
         }
     }
 }
@@ -112,6 +116,16 @@ impl Settings {
                 .filter(|&y: &u32| y <= 100)
                 .unwrap_or(d.files_older_than),
             last_path: get(LAST_PATH).filter(|p| !p.is_empty()),
+            // One path per line: Windows paths cannot hold a line break.
+            recent: get(RECENT_PATHS)
+                .map(|v| {
+                    v.lines()
+                        .filter(|p| !p.trim().is_empty())
+                        .take(crate::app::MAX_RECENT)
+                        .map(String::from)
+                        .collect()
+                })
+                .unwrap_or_default(),
         }
     }
 
@@ -151,6 +165,7 @@ impl Settings {
         storage.set_string(FILES_SORT, sort_name(self.files_sort).into());
         storage.set_string(FILES_OLDER_THAN, self.files_older_than.to_string());
         storage.set_string(LAST_PATH, self.last_path.clone().unwrap_or_default());
+        storage.set_string(RECENT_PATHS, self.recent.join("\n"));
     }
 }
 
@@ -207,6 +222,7 @@ mod tests {
             files_sort: ListSort::Oldest,
             files_older_than: 5,
             last_path: Some(r"D:\Projects".into()),
+            recent: vec![r"D:\Projects".into(), r"\\server\share\Фото".into()],
         };
         let mut storage = MemStorage::default();
         s.save(&mut storage);
