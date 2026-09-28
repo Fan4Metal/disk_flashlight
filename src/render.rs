@@ -50,12 +50,11 @@ pub struct Palette {
     /// Free space of a drive: a pale cool grey, apart from the warm palette.
     pub free: Color32,
     // --- Search highlight ---
-    /// Colour that sectors without matches fade towards.
+    /// Colour of every sector without matches, one flat grey so that the
+    /// matches stand out.
     pub dimmed: Color32,
-    /// How far sectors without matches fade (0 = not at all, 1 = fully).
-    pub dim: f32,
-    /// How much colour a folder with a sliver of matches gets back, so that
-    /// it stands apart from folders without any.
+    /// How much colour a folder with a sliver of matches gets, so that it
+    /// stands apart from folders without any.
     pub partial_min: f32,
 }
 
@@ -74,7 +73,6 @@ impl Default for Palette {
             sat_group: 0.22,
             free: Color32::from_rgb(218, 228, 238),
             dimmed: Color32::from_gray(246),
-            dim: 0.93,
             partial_min: 0.3,
         }
     }
@@ -127,14 +125,14 @@ impl Palette {
 
     /// `color` of a sector while search matches are highlighted; `share` is
     /// the part of it (by size) that matches. Matches keep their colour,
-    /// sectors without any fade, and folders holding some are in between.
+    /// sectors without any are `dimmed`, and folders holding some are in
+    /// between.
     pub fn highlight(&self, color: Color32, share: f32) -> Color32 {
-        let faded = color.lerp_to_gamma(self.dimmed, self.dim);
         if share <= 0.0 {
-            faded
+            self.dimmed
         } else {
             let t = self.partial_min + (1.0 - self.partial_min) * share.min(1.0);
-            faded.lerp_to_gamma(color, t)
+            self.dimmed.lerp_to_gamma(color, t)
         }
     }
 }
@@ -234,6 +232,10 @@ pub fn build_mesh(model: &Model, layout: &Layout, palette: &Palette, hits: Optio
         for (i, s) in sectors.iter().enumerate() {
             let color = if s.is_free() {
                 palette.free
+            } else if s.is_group() && hits.is_some() {
+                // The muted group colour would read as dimmed: colour a group
+                // holding matches like a small item instead.
+                palette.color(ring, i, n_rings, 0.0, false)
             } else if s.is_group() {
                 palette.group_color(ring, n_rings)
             } else {
@@ -347,6 +349,9 @@ mod tests {
         let (none, some, most) = (p.highlight(c, 0.0), p.highlight(c, 0.01), p.highlight(c, 0.8));
         // Red fading towards grey gains green: the less matches, the paler.
         assert!(none.g() > some.g() + 10 && some.g() > most.g() && most.g() > c.g());
+        // Without matches every colour turns into the same grey.
+        assert_eq!(none, p.dimmed);
+        assert_eq!(p.highlight(p.color(2, 1, 3, 0.1, false), 0.0), p.dimmed);
     }
 
     #[test]
