@@ -62,6 +62,10 @@ pub struct App {
     start_icon: Option<egui::TextureHandle>,
     /// Folders scanned recently, newest first, offered in the drive picker.
     pub recent: Vec<String>,
+    /// Theme of the last frame, to notice a change.
+    shown_theme: Option<egui::Theme>,
+    /// Repaint the window caption on this frame (see `follow_theme`).
+    refresh_caption: bool,
 }
 
 /// Number of folders kept in [`App::recent`].
@@ -143,6 +147,8 @@ impl App {
             path_edit: PathField::default(),
             start_icon: None,
             recent: settings.recent,
+            shown_theme: None,
+            refresh_caption: false,
         };
         app.chart.palette.mode = settings.color_mode;
         app.about.lang = settings.language;
@@ -514,6 +520,26 @@ impl App {
         }
     }
 
+    /// Bring the window caption in line with the theme. egui passes a new
+    /// theme to the window at the end of the frame it changed in, and
+    /// Windows applies it to the caption only on the next repaint of the
+    /// frame, so the frame after the change asks for one.
+    fn follow_theme(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        if std::mem::take(&mut self.refresh_caption)
+            && let Ok(handle) = frame.window_handle()
+            && let RawWindowHandle::Win32(w) = handle.as_raw()
+        {
+            scan::win::refresh_caption(w.hwnd.get());
+        }
+        let theme = ctx.theme();
+        if self.shown_theme.is_some_and(|t| t != theme) {
+            self.refresh_caption = true;
+            ctx.request_repaint();
+        }
+        self.shown_theme = Some(theme);
+    }
+
     fn handle_keys(&mut self, ctx: &egui::Context) {
         // Do not steal keys from a focused text field.
         if ctx.memory(|m| m.focused().is_some()) {
@@ -594,6 +620,7 @@ impl eframe::App for App {
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
         }
+        self.follow_theme(&ctx, frame);
         self.poll_drives();
         self.poll_scan(&ctx);
         self.poll_delete();

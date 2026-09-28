@@ -859,6 +859,7 @@ dependencies = [
  "env_logger",
  "log",
  "parking_lot",
+ "raw-window-handle",
  "rayon",
  "rfd",
  "windows-sys 0.61.2",

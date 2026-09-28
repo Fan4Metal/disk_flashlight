@@ -163,6 +163,25 @@ pub fn compressed_size(path: &Path) -> Option<u64> {
     Some(((high as u64) << 32) | low as u64)
 }
 
+/// Repaint the caption and frame of window `hwnd` after its dark-mode
+/// attribute changed: Windows 10 keeps the old colours until the next
+/// non-client repaint (a resize, a change of focus). Flipping the caption
+/// to the other activation state and back forces one. The functions come
+/// from user32 directly, to spare another `windows-sys` feature.
+pub fn refresh_caption(hwnd: isize) {
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn SendMessageW(hwnd: isize, msg: u32, wparam: usize, lparam: isize) -> isize;
+        fn GetActiveWindow() -> isize;
+    }
+    const WM_NCACTIVATE: u32 = 0x0086;
+    unsafe {
+        let active = GetActiveWindow() == hwnd;
+        SendMessageW(hwnd, WM_NCACTIVATE, usize::from(!active), 0);
+        SendMessageW(hwnd, WM_NCACTIVATE, usize::from(active), 0);
+    }
+}
+
 /// Whether Windows shows its interface in Russian (primary language of
 /// the user's UI language, `LANG_RUSSIAN`).
 pub fn ui_language_is_russian() -> bool {
