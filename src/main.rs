@@ -12,6 +12,7 @@ mod settings;
 mod ui;
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use format::{human_size, thousands};
@@ -21,6 +22,10 @@ use format::{human_size, thousands};
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// eframe app id; also names the settings folder in `%APPDATA%`.
 const APP_ID: &str = "Disk Flashlight";
+
+/// The saved window was maximized: it is created normal and maximized once
+/// shown (see `main`), and `App` reads this to do so.
+pub static MAXIMIZE_WHEN_SHOWN: AtomicBool = AtomicBool::new(false);
 
 /// The release build is a GUI-subsystem program with no console of its own,
 /// so text printed by the command-line modes would be lost when started from
@@ -104,6 +109,18 @@ fn main() -> anyhow::Result<()> {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(4),
+        // eframe creates the window hidden and shows it after the first
+        // frame, but winit shows a window created maximized at once
+        // (ShowWindow(SW_MAXIMIZE)), which flashes an empty white window.
+        // So a restored maximized window is created normal, at the same
+        // size, and maximized by `App` once it is visible.
+        window_builder: Some(Box::new(|mut builder| {
+            if builder.maximized == Some(true) {
+                builder.maximized = Some(false);
+                MAXIMIZE_WHEN_SHOWN.store(true, Ordering::Relaxed);
+            }
+            builder
+        })),
         ..Default::default()
     };
     eframe::run_native(

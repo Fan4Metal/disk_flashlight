@@ -462,6 +462,13 @@ impl eframe::App for App {
 
     fn ui(&mut self, root_ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = root_ui.ctx().clone();
+        // eframe shows the window after the first frame; maximize it from
+        // the second one (see `main::MAXIMIZE_WHEN_SHOWN`).
+        if ctx.cumulative_frame_nr() >= 1
+            && crate::MAXIMIZE_WHEN_SHOWN.swap(false, std::sync::atomic::Ordering::Relaxed)
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+        }
         self.poll_drives();
         self.poll_scan(&ctx);
         self.poll_delete();
