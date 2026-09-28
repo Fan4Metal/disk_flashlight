@@ -12,9 +12,6 @@ const ROW_HEIGHT: f32 = 20.0;
 #[derive(Default)]
 pub struct ErrorsView {
     pub open: bool,
-    /// Set when the window opens: place it in the middle of the app window
-    /// instead of where egui remembers it.
-    center: bool,
     /// All errors of the scan; `list` holds at most `MAX_KEPT_ERRORS`.
     count: u64,
     /// Sorted by path.
@@ -27,7 +24,6 @@ impl ErrorsView {
         list.sort_by(|a, b| a.path.cmp(&b.path));
         *self = Self {
             open: false,
-            center: false,
             count,
             list,
         };
@@ -49,7 +45,6 @@ impl ErrorsView {
             .clicked()
         {
             self.open = true;
-            self.center = true;
         }
     }
 
@@ -59,22 +54,16 @@ impl ErrorsView {
             return;
         }
         let mut open = self.open;
-        let center = ctx.content_rect().center();
         // The title carries the count; a fixed id keeps it one window.
         let n = thousands(self.count);
-        let mut window = egui::Window::new(tr!(format!("Access errors ({n})"), format!("Ошибки доступа ({n})")))
+        // Anchored to the middle of the app window: it stays there when
+        // the app window is resized, and cannot be dragged away.
+        egui::Window::new(tr!(format!("Access errors ({n})"), format!("Ошибки доступа ({n})")))
             .id(egui::Id::new("access_errors"))
             .open(&mut open)
             .default_size([640.0, 420.0])
-            .pivot(egui::Align2::CENTER_CENTER)
-            .default_pos(center)
-            .collapsible(false);
-        // egui keeps the position of a closed window (across restarts too),
-        // so every opening moves it back to the middle; it stays movable.
-        if std::mem::take(&mut self.center) {
-            window = window.current_pos(center);
-        }
-        window
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .collapsible(false)
             .show(ctx, |ui| {
                 let n = self.count;
                 ui.label(match n {
