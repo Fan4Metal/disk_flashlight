@@ -3,10 +3,11 @@
 //! click that moves the chart does not change the list.
 
 use egui::{
-    CursorIcon, Key, Margin, Rect, Response, ScrollArea, Sense, Stroke, Ui, Vec2, pos2, vec2,
+    Align2, CursorIcon, FontId, Key, Margin, Pos2, Rect, Response, ScrollArea, Sense, Stroke, Ui,
+    Vec2, pos2, vec2,
 };
 
-use crate::format::thousands;
+use crate::format::{human_size, thousands};
 use crate::model::{Metric, Model};
 use crate::ui::files::{ROW_HEIGHT, folder_under, item_row};
 use crate::ui::tree::TreeAction;
@@ -19,19 +20,25 @@ pub struct SearchView {
     pub query: String,
     /// Put the keyboard focus into the field on the next frame (Ctrl+F).
     pub focus: bool,
-    /// `(query, metric)` the rows were built for.
-    key: Option<(String, Metric)>,
+    /// Match whole words only (kept in the settings).
+    pub whole_word: bool,
+    /// `(query, metric, whole_word)` the rows were built for.
+    key: Option<(String, Metric, bool)>,
     count: usize,
+    /// Size of all matches, each byte once.
+    total: u64,
     /// Largest first: item id and its folder relative to the scan root.
     rows: Vec<(u32, String)>,
     selected: Option<u32>,
 }
 
 impl SearchView {
-    /// Forget the results (new model); the query stays and is run again.
+    /// Forget the results (new model); the query and the mode stay and are
+    /// run again.
     pub fn reset(&mut self) {
         *self = Self {
             query: std::mem::take(&mut self.query),
+            whole_word: self.whole_word,
             ..Self::default()
         };
     }
@@ -46,11 +53,11 @@ impl SearchView {
     ) -> TreeAction {
         let field = ui.add(
             egui::TextEdit::singleline(&mut self.query)
-                .hint_text("Search names (Ctrl+F)")
+                .hint_text("Name or mask like *.mp4 (Ctrl+F)")
                 .desired_width(f32::INFINITY)
                 .margin(Margin {
                     left: 4,
-                    right: 4 + CLEAR_SIZE as i8,
+                    right: (4.0 + CLEAR_SIZE + 2.0 + WORD_SIZE.x + 3.0) as i8,
                     top: 2,
                     bottom: 2,
                 }),
@@ -65,7 +72,19 @@ impl SearchView {
             self.query.clear();
             focus = true;
         }
-        if !self.query.is_empty() && clear_button(ui, field.rect).clicked() {
+        // Buttons inside the field's right end: [x] [ab], the toggle outermost
+        // so that it does not move when the clear button appears.
+        let word = Rect::from_center_size(
+            pos2(field.rect.right() - 3.0 - WORD_SIZE.x / 2.0, field.rect.center().y),
+            WORD_SIZE,
+        );
+        let mask = self.query.contains(['*', '?']);
+        if whole_word_button(ui, word, self.whole_word, !mask).clicked() {
+            self.whole_word = !self.whole_word;
+            focus = true;
+        }
+        let clear = pos2(word.left() - 2.0 - CLEAR_SIZE / 2.0, word.center().y);
+        if !self.query.is_empty() && clear_button(ui, clear).clicked() {
             self.query.clear();
             focus = true;
         }
@@ -75,24 +94,30 @@ impl SearchView {
         let stale = self
             .key
             .as_ref()
-            .is_none_or(|(q, m)| *q != self.query || *m != metric);
+            .is_none_or(|(q, m, w)| *q != self.query || *m != metric || *w != self.whole_word);
         if stale {
-            let (count, ids) = model.search(0, self.query.trim(), metric, LIMIT);
-            self.count = count;
-            self.rows = ids.into_iter().map(|id| (id, folder_under(model, 0, id))).collect();
-            self.key = Some((self.query.clone(), metric));
+            let found = model.search(0, self.query.trim(), metric, LIMIT, self.whole_word);
+            (self.count, self.total) = (found.count, found.total);
+            self.rows = found.ids.into_iter().map(|id| (id, folder_under(model, 0, id))).collect();
+            self.key = Some((self.query.clone(), metric, self.whole_word));
         }
 
         let mut action = TreeAction::default();
         if self.query.trim().is_empty() {
-            ui.weak("Type part of a name to search the whole scan");
+            ui.weak("Type part of a name, or a mask such as *.mp4, to search the whole scan");
             return action;
         }
-        ui.weak(match self.count {
+        let summary = match self.count {
             0 => "No matches".to_string(),
-            n if n > LIMIT => format!("{} matches, the {LIMIT} largest shown", thousands(n as u64)),
-            n => format!("{} matches", thousands(n as u64)),
-        });
+            1 => format!("1 match ({})", human_size(self.total)),
+            n => format!("{} matches ({})", thousands(n as u64), human_size(self.total)),
+        };
+        ui.weak(if self.count > LIMIT {
+            format!("{summary}, the {LIMIT} largest shown")
+        } else {
+            summary
+        })
+        .on_hover_text("Total size of the matches; files inside a matching folder count once");
         ScrollArea::vertical()
             .auto_shrink([false, false])
             .show_rows(ui, ROW_HEIGHT, self.rows.len(), |ui, range| {
@@ -117,13 +142,13 @@ impl SearchView {
 /// Side of the clear button's square, in points.
 const CLEAR_SIZE: f32 = 16.0;
 
-/// A round "x" button at the right end of the search field (`field`), drawn
+/// Size of the whole-word toggle, in points.
+const WORD_SIZE: Vec2 = vec2(22.0, 16.0);
+
+/// A round "x" button centred at `center` inside the search field, drawn
 /// rather than taken from a font so it stays crisp at any scale.
-fn clear_button(ui: &mut Ui, field: Rect) -> Response {
-    let rect = Rect::from_center_size(
-        pos2(field.right() - 4.0 - CLEAR_SIZE / 2.0, field.center().y),
-        Vec2::splat(CLEAR_SIZE),
-    );
+fn clear_button(ui: &mut Ui, center: Pos2) -> Response {
+    let rect = Rect::from_center_size(center, Vec2::splat(CLEAR_SIZE));
     let resp = ui
         .interact(rect, ui.id().with("clear_search"), Sense::click())
         .on_hover_cursor(CursorIcon::PointingHand)
@@ -141,5 +166,41 @@ fn clear_button(ui: &mut Ui, field: Rect) -> Response {
     let stroke = Stroke::new(1.5, visuals.extreme_bg_color);
     painter.line_segment([c + vec2(-d, -d), c + vec2(d, d)], stroke);
     painter.line_segment([c + vec2(-d, d), c + vec2(d, -d)], stroke);
+    resp
+}
+
+/// The whole-word toggle in `rect`: "ab" over a bracket, as in code editors;
+/// highlighted with the selection colour while `on`, faded unless `applies`
+/// (masks ignore it).
+fn whole_word_button(ui: &mut Ui, rect: Rect, on: bool, applies: bool) -> Response {
+    let resp = ui
+        .interact(rect, ui.id().with("whole_word"), Sense::click())
+        .on_hover_cursor(CursorIcon::PointingHand)
+        .on_hover_text(if applies {
+            "Match whole words only"
+        } else {
+            "Match whole words only (not used with * and ?)"
+        });
+    let fade = if applies { 1.0 } else { 0.4 };
+    let visuals = ui.visuals();
+    let painter = ui.painter();
+    if on {
+        painter.rect_filled(rect, 3.0, visuals.selection.bg_fill.gamma_multiply(fade));
+    } else if resp.hovered() {
+        painter.rect_filled(rect, 3.0, visuals.widgets.hovered.weak_bg_fill);
+    }
+    let color = if on || resp.hovered() {
+        visuals.strong_text_color()
+    } else {
+        visuals.weak_text_color()
+    }
+    .gamma_multiply(fade);
+    let c = rect.center();
+    painter.text(c - vec2(0.0, 2.0), Align2::CENTER_CENTER, "ab", FontId::proportional(11.0), color);
+    let (y, x0, x1) = (rect.bottom() - 3.0, c.x - 6.0, c.x + 6.0);
+    painter.line(
+        vec![pos2(x0, y - 2.5), pos2(x0, y), pos2(x1, y), pos2(x1, y - 2.5)],
+        Stroke::new(1.0, color),
+    );
     resp
 }

@@ -11,6 +11,7 @@ const COLOR_MODE: &str = "color_mode";
 const FOLLOW_IN_TREE: &str = "follow_in_tree";
 const LAST_PATH: &str = "last_path";
 const SIDE_VIEW: &str = "side_view";
+const SEARCH_WHOLE_WORD: &str = "search_whole_word";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
@@ -19,6 +20,8 @@ pub struct Settings {
     pub follow_in_tree: bool,
     /// What the left panel shows.
     pub side_view: SideView,
+    /// Search matches whole words only.
+    pub search_whole_word: bool,
     /// Path of the last scan, offered in the path field on the next start.
     pub last_path: Option<String>,
 }
@@ -30,6 +33,7 @@ impl Default for Settings {
             color_mode: ColorMode::default(),
             follow_in_tree: true,
             side_view: SideView::default(),
+            search_whole_word: false,
             last_path: None,
         }
     }
@@ -62,6 +66,11 @@ impl Settings {
                 Some("search") => SideView::Search,
                 _ => d.side_view,
             },
+            search_whole_word: match get(SEARCH_WHOLE_WORD).as_deref() {
+                Some("true") => true,
+                Some("false") => false,
+                _ => d.search_whole_word,
+            },
             last_path: get(LAST_PATH).filter(|p| !p.is_empty()),
         }
     }
@@ -84,6 +93,7 @@ impl Settings {
         };
         storage.set_string(FOLLOW_IN_TREE, self.follow_in_tree.to_string());
         storage.set_string(SIDE_VIEW, side_view.into());
+        storage.set_string(SEARCH_WHOLE_WORD, self.search_whole_word.to_string());
         storage.set_string(LAST_PATH, self.last_path.clone().unwrap_or_default());
     }
 }
@@ -117,6 +127,7 @@ mod tests {
             color_mode: ColorMode::Depth,
             follow_in_tree: false,
             side_view: SideView::LargestFiles,
+            search_whole_word: true,
             last_path: Some(r"D:\Projects".into()),
         };
         let mut storage = MemStorage::default();

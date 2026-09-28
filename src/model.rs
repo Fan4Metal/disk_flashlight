@@ -298,45 +298,148 @@ impl Model {
     }
 
     /// Files and directories under `root` whose name contains `query`,
-    /// ignoring case: how many there are, and the `limit` largest of them by
-    /// `metric`, largest first.
-    pub fn search(&self, root: u32, query: &str, metric: Metric, limit: usize) -> (usize, Vec<u32>) {
+    /// ignoring case, with the `limit` largest of them by `metric`.
+    ///
+    /// With `whole_word`, a match must not continue a word on either side
+    /// (letters, digits and `_` make words). Only ends of the query that are
+    /// word characters are checked, so `.py` finds `a.py` and `a.py.bak` but
+    /// not `a.pyd`.
+    ///
+    /// A query with `*` (any run of characters) or `?` (one character) is a
+    /// mask for the whole name instead, as in Explorer: `*.py` finds names
+    /// ending in `.py`. `whole_word` does not apply to masks.
+    pub fn search(
+        &self,
+        root: u32,
+        query: &str,
+        metric: Metric,
+        limit: usize,
+        whole_word: bool,
+    ) -> Found {
         let needle = query.to_lowercase();
         if needle.is_empty() {
-            return (0, Vec::new());
-        }
-        // An ASCII query compares bytes without lowercasing the names; other
-        // bytes of UTF-8 never equal ASCII ones, so any name works with it.
-        let ascii = needle.is_ascii();
-        let mut lowered = String::new();
-        let mut matches = |name: &str| {
-            if ascii {
-                let (h, n) = (name.as_bytes(), needle.as_bytes());
-                n.len() <= h.len() && h.windows(n.len()).any(|w| w.eq_ignore_ascii_case(n))
-            } else if name.is_ascii() {
-                false // lowercases to ASCII, so it cannot hold the non-ASCII needle
-            } else {
-                lowered.clear();
-                lowered.extend(name.chars().flat_map(char::to_lowercase));
-                lowered.contains(&needle)
-            }
-        };
-        let mut best = TopN::new(limit);
-        let mut count = 0;
-        let mut stack = vec![root];
-        while let Some(dir) = stack.pop() {
-            for c in self.children(dir) {
-                if matches(self.name(c)) {
-                    count += 1;
-                    best.push(self.node(c).metric(metric), c);
+            Found::default()
+        } else if needle.contains(['*', '?']) {
+            let chars: Vec<char> = needle.chars().collect();
+            let mut lowered = Vec::new();
+            self.find(root, metric, limit, |name| {
+                if needle.is_ascii() && name.is_ascii() {
+                    wildcard(needle.as_bytes(), name.as_bytes(), |p, c| p == c.to_ascii_lowercase())
+                } else {
+                    lowered.clear();
+                    lowered.extend(name.chars().flat_map(char::to_lowercase));
+                    wildcard(&chars, &lowered, |p, c| p == c)
                 }
-                if self.node(c).is_dir {
-                    stack.push(c);
+            })
+        } else {
+            let check_start = needle.chars().next().is_some_and(is_word_char);
+            let check_end = needle.chars().next_back().is_some_and(is_word_char);
+            // Whether `hay[at..at + len]`, a match, stands as a whole word.
+            let bounded = |hay: &str, at: usize, len: usize| {
+                !(check_start && hay[..at].chars().next_back().is_some_and(is_word_char)
+                    || check_end && hay[at + len..].chars().next().is_some_and(is_word_char))
+            };
+            // An ASCII query compares bytes without lowercasing the names;
+            // other bytes of UTF-8 never equal ASCII ones, so any name works
+            // with it (and a match starts and ends on character boundaries).
+            let ascii = needle.is_ascii();
+            let mut lowered = String::new();
+            self.find(root, metric, limit, |name| {
+                if ascii {
+                    let (h, n) = (name.as_bytes(), needle.as_bytes());
+                    n.len() <= h.len()
+                        && h.windows(n.len()).enumerate().any(|(at, w)| {
+                            w.eq_ignore_ascii_case(n) && (!whole_word || bounded(name, at, n.len()))
+                        })
+                } else if name.is_ascii() {
+                    false // lowercases to ASCII, so it cannot hold the non-ASCII needle
+                } else {
+                    lowered.clear();
+                    lowered.extend(name.chars().flat_map(char::to_lowercase));
+                    if whole_word {
+                        lowered
+                            .match_indices(&needle)
+                            .any(|(at, _)| bounded(&lowered, at, needle.len()))
+                    } else {
+                        lowered.contains(&needle)
+                    }
                 }
-            }
+            })
         }
-        (count, best.into_ids())
     }
+
+    /// Everything under `root` whose name `matches`, for [`Self::search`].
+    fn find(&self, root: u32, metric: Metric, limit: usize, mut matches: impl FnMut(&str) -> bool) -> Found {
+        let mut best = TopN::new(limit);
+        let (mut count, mut total) = (0, 0);
+        // A folder is pushed with whether it or one of its ancestors matched.
+        let mut stack = vec![(root, false)];
+        while let Some((dir, inside)) = stack.pop() {
+            for c in self.children(dir) {
+                let n = self.node(c);
+                let hit = matches(self.name(c));
+                if hit {
+                    count += 1;
+                    best.push(n.metric(metric), c);
+                    if !inside {
+                        total += n.metric(metric);
+                    }
+                }
+                if n.is_dir {
+                    stack.push((c, inside || hit));
+                }
+            }
+        }
+        Found {
+            count,
+            total,
+            ids: best.into_ids(),
+        }
+    }
+}
+
+/// What [`Model::search`] found.
+#[derive(Debug, Default, PartialEq)]
+pub struct Found {
+    /// Number of matches.
+    pub count: usize,
+    /// Size of the matches by the metric, each byte once: matches inside a
+    /// matching folder are already part of its size.
+    pub total: u64,
+    /// The largest matches, largest first.
+    pub ids: Vec<u32>,
+}
+
+/// Whether `text` matches the mask `pat` as a whole, where `*` stands for
+/// any run of characters and `?` for one; `eq(p, c)` compares a mask
+/// character with a text one. On a mismatch after `*` only the last `*` is
+/// retried one character further, which is enough and keeps it linear in
+/// practice.
+fn wildcard<T: Copy + PartialEq + From<u8>>(pat: &[T], text: &[T], eq: impl Fn(T, T) -> bool) -> bool {
+    let (star, any) = (T::from(b'*'), T::from(b'?'));
+    let (mut p, mut t) = (0, 0);
+    let mut retry = None; // (mask position after the last `*`, text position)
+    while t < text.len() {
+        if p < pat.len() && pat[p] == star {
+            p += 1;
+            retry = Some((p, t));
+        } else if p < pat.len() && (pat[p] == any || eq(pat[p], text[t])) {
+            p += 1;
+            t += 1;
+        } else if let Some((rp, rt)) = retry {
+            p = rp;
+            t = rt + 1;
+            retry = Some((rp, t));
+        } else {
+            return false;
+        }
+    }
+    pat[p..].iter().all(|&c| c == star)
+}
+
+/// Characters that make up words for [`Model::search`]'s whole-word mode.
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
 }
 
 /// The `limit` largest of the ids pushed, kept in a min-heap.
@@ -478,24 +581,103 @@ mod tests {
         let m = Model::from_raw(raw, "X:\\".into(), 1);
         let names = |ids: Vec<u32>| ids.into_iter().map(|i| m.name(i).to_string()).collect::<Vec<_>>();
 
-        let (count, ids) = m.search(0, "REPORT", Metric::Logical, 10);
-        assert_eq!(count, 2);
-        assert_eq!(names(ids), ["report-2025.pdf", "Report.PDF"]);
+        let f = m.search(0, "REPORT", Metric::Logical, 10, false);
+        assert_eq!((f.count, f.total), (2, 120));
+        assert_eq!(names(f.ids), ["report-2025.pdf", "Report.PDF"]);
 
-        // Cyrillic, case-insensitive: the folder and a file inside it.
-        let (count, ids) = m.search(0, "отчё", Metric::Logical, 10);
-        assert_eq!(count, 2);
-        assert_eq!(names(ids), ["Отчёты", "ОТЧЁТ.docx"]);
+        // Cyrillic, case-insensitive: the folder and a file inside it, which
+        // the total does not count twice.
+        let f = m.search(0, "отчё", Metric::Logical, 10, false);
+        assert_eq!((f.count, f.total), (2, 100));
+        assert_eq!(names(f.ids), ["Отчёты", "ОТЧЁТ.docx"]);
 
-        // The limit keeps the largest, the count stays complete.
-        let (count, ids) = m.search(0, ".", Metric::Logical, 2);
-        assert_eq!(count, 4);
-        assert_eq!(names(ids), ["report-2025.pdf", "Report.PDF"]);
+        // The limit keeps the largest, the count and total stay complete.
+        let f = m.search(0, ".", Metric::Logical, 2, false);
+        assert_eq!((f.count, f.total), (4, 155));
+        assert_eq!(names(f.ids), ["report-2025.pdf", "Report.PDF"]);
 
         // Only under the given root; an empty query finds nothing.
         let sub = m.find_dir(&["Отчёты"]);
-        assert_eq!(m.search(sub, "pdf", Metric::Logical, 10).0, 1);
-        assert_eq!(m.search(0, "", Metric::Logical, 10), (0, Vec::new()));
+        assert_eq!(m.search(sub, "pdf", Metric::Logical, 10, false).count, 1);
+        assert_eq!(m.search(0, "", Metric::Logical, 10, false), Found::default());
+    }
+
+    #[test]
+    fn search_whole_words() {
+        let raw = RawDir {
+            name: "root".into(),
+            files: ["a.py", "b.pyd", "c.py.bak", "my_py.txt", "py", "pyd.py", "Отчёт 2025.doc", "Отчёты.doc"]
+                .into_iter()
+                .map(|n| file(n, 1))
+                .collect(),
+            ..Default::default()
+        };
+        let m = Model::from_raw(raw, "X:\\".into(), 1);
+        let found = |q: &str| {
+            let mut names: Vec<String> = m
+                .search(0, q, Metric::Logical, 10, true)
+                .ids
+                .into_iter()
+                .map(|i| m.name(i).to_string())
+                .collect();
+            names.sort();
+            names
+        };
+        // A leading dot is not checked, the trailing "y" is.
+        assert_eq!(found(".PY"), ["a.py", "c.py.bak", "pyd.py"]);
+        // "_" is a word character; the name itself may be the word; in
+        // "pyd.py" the second occurrence counts.
+        assert_eq!(found("py"), ["a.py", "c.py.bak", "py", "pyd.py"]);
+        // Non-ASCII names.
+        assert_eq!(found("отчёт"), ["Отчёт 2025.doc"]);
+        assert_eq!(m.search(0, "отчёт", Metric::Logical, 10, false).count, 2);
+    }
+
+    #[test]
+    fn search_masks() {
+        let raw = RawDir {
+            name: "root".into(),
+            files: ["a.py", "b.pyd", "c.py.bak", "Script.PY", "отчёт.py", "abab.txt", "x.txt"]
+                .into_iter()
+                .map(|n| file(n, 1))
+                .collect(),
+            ..Default::default()
+        };
+        let m = Model::from_raw(raw, "X:\\".into(), 1);
+        let found = |q: &str, whole_word| {
+            let mut names: Vec<String> = m
+                .search(0, q, Metric::Logical, 10, whole_word)
+                .ids
+                .into_iter()
+                .map(|i| m.name(i).to_string())
+                .collect();
+            names.sort();
+            names
+        };
+        // The mask covers the whole name, ignoring case, in any script.
+        assert_eq!(found("*.py", false), ["Script.PY", "a.py", "отчёт.py"]);
+        assert_eq!(found("?.py*", false), ["a.py", "b.pyd", "c.py.bak"]);
+        assert_eq!(found("ОТЧ?Т.*", false), ["отчёт.py"]);
+        assert_eq!(found("*.p", false), Vec::<String>::new());
+        // A `*` retried after a partial match.
+        assert_eq!(found("*ab*.txt", false), ["abab.txt"]);
+        assert_eq!(found("*", false).len(), 7);
+        // Whole words do not apply to masks.
+        assert_eq!(found("*.py", true), found("*.py", false));
+    }
+
+    #[test]
+    fn wildcard_matching() {
+        let w = |p: &str, t: &str| wildcard(p.as_bytes(), t.as_bytes(), |a, b| a == b);
+        assert!(w("", ""));
+        assert!(!w("", "a"));
+        assert!(w("*", ""));
+        assert!(w("**a**", "a"));
+        assert!(w("a*b*c", "aXbYbZc"));
+        assert!(!w("a*b*c", "aXbYbZ"));
+        assert!(w("?", "a"));
+        assert!(!w("?", ""));
+        assert!(w("*a?c", "abcabc"));
     }
 
     #[test]
