@@ -124,8 +124,29 @@ impl App {
         if let Some(h) = &self.scan {
             h.cancel();
         }
+        // Another drive or folder: its old results go at once, and the
+        // spinner shows until the new ones arrive. A rescan of the same
+        // path keeps them, and then the current folder and the history.
+        let path_str = path.to_string_lossy();
+        if self.model.as_ref().is_some_and(|m| !same_path(&m.root_path, &path_str)) {
+            self.clear_model();
+        }
         self.status = format!("Scanning {}", path.display());
         self.scan = Some(scan::start(path));
+    }
+
+    /// Show no scan result: the chart, the tree and the lists go.
+    fn clear_model(&mut self) {
+        self.model = None;
+        self.nav.reset();
+        self.tree.reset();
+        self.files.reset();
+        self.search.reset();
+        self.chart.invalidate();
+        self.tree_hovered = None;
+        self.disk = None;
+        self.errors = ErrorsView::default();
+        self.confirm_delete = None;
     }
 
     pub fn rescan(&mut self) {
@@ -191,7 +212,7 @@ impl App {
     /// ancestor) and the history; anything else starts at the root.
     fn set_model(&mut self, model: Model) {
         match self.model.take() {
-            Some(old) if old.root_path.eq_ignore_ascii_case(&model.root_path) => {
+            Some(old) if same_path(&old.root_path, &model.root_path) => {
                 self.nav.remap(|id| model.find_dir(&old.rel_path(id)));
             }
             _ => self.nav.reset(),
@@ -461,14 +482,26 @@ impl eframe::App for App {
         });
 
         let Some(model) = self.model.clone() else {
-            egui::CentralPanel::default().show(root_ui, |ui| {
-                ui.centered_and_justified(|ui| {
-                    if self.scan.is_some() {
+            egui::CentralPanel::default().show(root_ui, |ui| match &self.scan {
+                Some(h) => {
+                    let (files, dirs, _, _) = h.progress.snapshot();
+                    ui.vertical_centered(|ui| {
+                        ui.add_space((ui.available_height() * 0.5 - 60.0).max(0.0));
                         ui.add(egui::Spinner::new().size(48.0));
-                    } else {
+                        ui.add_space(12.0);
+                        ui.heading(format!("Scanning {}", h.path.display()));
+                        ui.weak(format!(
+                            "{} files, {} folders",
+                            thousands(files),
+                            thousands(dirs)
+                        ));
+                    });
+                }
+                None => {
+                    ui.centered_and_justified(|ui| {
                         ui.heading("Select a drive or enter a path to begin");
-                    }
-                });
+                    });
+                }
             });
             return;
         };
@@ -530,6 +563,12 @@ impl eframe::App for App {
     }
 }
 
+/// Whether two paths name the same folder, ignoring case and a trailing
+/// backslash (`D:\` and `d:`).
+fn same_path(a: &str, b: &str) -> bool {
+    a.trim_end_matches('\\').eq_ignore_ascii_case(b.trim_end_matches('\\'))
+}
+
 /// `C:\` (also `c:`) -> `Some("C:\\")`; any other path -> `None`.
 fn drive_root_of(path: &str) -> Option<String> {
     let p = std::path::Path::new(path);
@@ -550,7 +589,7 @@ pub fn quote_arg(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{drive_root_of, quote_arg};
+    use super::{drive_root_of, quote_arg, same_path};
 
     #[test]
     fn drive_roots() {
@@ -559,6 +598,14 @@ mod tests {
         assert_eq!(drive_root_of(r"D:\Projects"), None);
         assert_eq!(drive_root_of(r"\\server\share"), None);
         assert_eq!(drive_root_of(""), None);
+    }
+
+    #[test]
+    fn same_paths() {
+        assert!(same_path(r"D:\", "d:"));
+        assert!(same_path(r"D:\Projects", r"d:\projects\"));
+        assert!(!same_path(r"D:\", r"C:\"));
+        assert!(!same_path(r"D:\Projects", r"D:\"));
     }
 
     #[test]
