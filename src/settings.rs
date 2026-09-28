@@ -2,7 +2,7 @@
 //! (`%APPDATA%\Disk Flashlight\data\app.ron`). Window size and position and
 //! egui's own state (panel widths) are saved by eframe itself.
 
-use crate::model::Metric;
+use crate::model::{ItemKind, Metric};
 use crate::render::ColorMode;
 use crate::ui::SideView;
 
@@ -12,6 +12,7 @@ const FOLLOW_IN_TREE: &str = "follow_in_tree";
 const LAST_PATH: &str = "last_path";
 const SIDE_VIEW: &str = "side_view";
 const SEARCH_WHOLE_WORD: &str = "search_whole_word";
+const SEARCH_KIND: &str = "search_kind";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
@@ -22,6 +23,8 @@ pub struct Settings {
     pub side_view: SideView,
     /// Search matches whole words only.
     pub search_whole_word: bool,
+    /// Search lists files, folders or both.
+    pub search_kind: ItemKind,
     /// Path of the last scan, offered in the path field on the next start.
     pub last_path: Option<String>,
 }
@@ -34,6 +37,7 @@ impl Default for Settings {
             follow_in_tree: true,
             side_view: SideView::default(),
             search_whole_word: false,
+            search_kind: ItemKind::All,
             last_path: None,
         }
     }
@@ -71,6 +75,12 @@ impl Settings {
                 Some("false") => false,
                 _ => d.search_whole_word,
             },
+            search_kind: match get(SEARCH_KIND).as_deref() {
+                Some("all") => ItemKind::All,
+                Some("files") => ItemKind::Files,
+                Some("folders") => ItemKind::Folders,
+                _ => d.search_kind,
+            },
             last_path: get(LAST_PATH).filter(|p| !p.is_empty()),
         }
     }
@@ -94,6 +104,12 @@ impl Settings {
         storage.set_string(FOLLOW_IN_TREE, self.follow_in_tree.to_string());
         storage.set_string(SIDE_VIEW, side_view.into());
         storage.set_string(SEARCH_WHOLE_WORD, self.search_whole_word.to_string());
+        let search_kind = match self.search_kind {
+            ItemKind::All => "all",
+            ItemKind::Files => "files",
+            ItemKind::Folders => "folders",
+        };
+        storage.set_string(SEARCH_KIND, search_kind.into());
         storage.set_string(LAST_PATH, self.last_path.clone().unwrap_or_default());
     }
 }
@@ -128,6 +144,7 @@ mod tests {
             follow_in_tree: false,
             side_view: SideView::LargestFiles,
             search_whole_word: true,
+            search_kind: ItemKind::Folders,
             last_path: Some(r"D:\Projects".into()),
         };
         let mut storage = MemStorage::default();

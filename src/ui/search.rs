@@ -3,12 +3,12 @@
 //! click that moves the chart does not change the list.
 
 use egui::{
-    Align2, CursorIcon, FontId, Key, Margin, Pos2, Rect, Response, ScrollArea, Sense, Stroke, Ui,
-    Vec2, pos2, vec2,
+    Align2, Color32, CursorIcon, FontId, Key, Margin, Pos2, Rect, Response, ScrollArea, Sense, Shape,
+    Stroke, Ui, Vec2, pos2, vec2,
 };
 
 use crate::format::{human_size, thousands};
-use crate::model::{Metric, Model};
+use crate::model::{ItemKind, Metric, Model};
 use crate::ui::files::{ROW_HEIGHT, folder_under, item_row};
 use crate::ui::tree::TreeAction;
 
@@ -22,8 +22,10 @@ pub struct SearchView {
     pub focus: bool,
     /// Match whole words only (kept in the settings).
     pub whole_word: bool,
-    /// `(query, metric, whole_word)` the rows were built for.
-    key: Option<(String, Metric, bool)>,
+    /// Files, folders or both (kept in the settings).
+    pub kind: ItemKind,
+    /// `(query, metric, whole_word, kind)` the rows were built for.
+    key: Option<(String, Metric, bool, ItemKind)>,
     count: usize,
     /// Size of all matches, each byte once.
     total: u64,
@@ -43,6 +45,7 @@ impl SearchView {
         *self = Self {
             query: std::mem::take(&mut self.query),
             whole_word: self.whole_word,
+            kind: self.kind,
             generation: self.generation,
             ..Self::default()
         };
@@ -68,7 +71,7 @@ impl SearchView {
                 .desired_width(f32::INFINITY)
                 .margin(Margin {
                     left: 4,
-                    right: (4.0 + CLEAR_SIZE + 2.0 + WORD_SIZE.x + 3.0) as i8,
+                    right: (4.0 + CLEAR_SIZE + 2.0 + 2.0 * (TOGGLE_SIZE.x + 2.0) + 1.0) as i8,
                     top: 2,
                     bottom: 2,
                 }),
@@ -83,18 +86,27 @@ impl SearchView {
             self.query.clear();
             focus = true;
         }
-        // Buttons inside the field's right end: [x] [ab], the toggle outermost
-        // so that it does not move when the clear button appears.
+        // Buttons inside the field's right end: [x] [kind] [ab], the toggles
+        // outermost so that they do not move when the clear button appears.
         let word = Rect::from_center_size(
-            pos2(field.rect.right() - 3.0 - WORD_SIZE.x / 2.0, field.rect.center().y),
-            WORD_SIZE,
+            pos2(field.rect.right() - 3.0 - TOGGLE_SIZE.x / 2.0, field.rect.center().y),
+            TOGGLE_SIZE,
         );
         let applies = !crate::model::masks_only(&self.query);
         if whole_word_button(ui, word, self.whole_word, applies).clicked() {
             self.whole_word = !self.whole_word;
             focus = true;
         }
-        let clear = pos2(word.left() - 2.0 - CLEAR_SIZE / 2.0, word.center().y);
+        let kind = word.translate(vec2(-(TOGGLE_SIZE.x + 2.0), 0.0));
+        if kind_button(ui, kind, self.kind).clicked() {
+            self.kind = match self.kind {
+                ItemKind::All => ItemKind::Files,
+                ItemKind::Files => ItemKind::Folders,
+                ItemKind::Folders => ItemKind::All,
+            };
+            focus = true;
+        }
+        let clear = pos2(kind.left() - 2.0 - CLEAR_SIZE / 2.0, word.center().y);
         if !self.query.is_empty() && clear_button(ui, clear).clicked() {
             self.query.clear();
             focus = true;
@@ -105,13 +117,15 @@ impl SearchView {
         let stale = self
             .key
             .as_ref()
-            .is_none_or(|(q, m, w)| *q != self.query || *m != metric || *w != self.whole_word);
+            .is_none_or(|(q, m, w, k)| {
+                *q != self.query || *m != metric || *w != self.whole_word || *k != self.kind
+            });
         if stale {
-            let found = model.search(0, self.query.trim(), metric, LIMIT, self.whole_word);
+            let found = model.search(0, self.query.trim(), metric, LIMIT, self.whole_word, self.kind);
             (self.count, self.total, self.hits) = (found.count, found.total, found.hits);
             self.generation += 1;
             self.rows = found.ids.into_iter().map(|id| (id, folder_under(model, 0, id))).collect();
-            self.key = Some((self.query.clone(), metric, self.whole_word));
+            self.key = Some((self.query.clone(), metric, self.whole_word, self.kind));
         }
 
         let mut action = TreeAction::default();
@@ -158,8 +172,8 @@ impl SearchView {
 /// Side of the clear button's square, in points.
 const CLEAR_SIZE: f32 = 16.0;
 
-/// Size of the whole-word toggle, in points.
-const WORD_SIZE: Vec2 = vec2(22.0, 16.0);
+/// Size of the toggles in the field, in points.
+const TOGGLE_SIZE: Vec2 = vec2(22.0, 16.0);
 
 /// A round "x" button centred at `center` inside the search field, drawn
 /// rather than taken from a font so it stays crisp at any scale.
@@ -185,32 +199,39 @@ fn clear_button(ui: &mut Ui, center: Pos2) -> Response {
     resp
 }
 
-/// The whole-word toggle in `rect`: "ab" over a bracket, as in code editors;
-/// highlighted with the selection colour while `on`, faded unless `applies`
-/// (a query of masks only ignores it).
-fn whole_word_button(ui: &mut Ui, rect: Rect, on: bool, applies: bool) -> Response {
+/// A toggle in the field at `rect`: its background, highlighted with the
+/// selection colour while `on` and faded to `fade`, and the colour to draw
+/// its glyph with.
+fn toggle(ui: &mut Ui, rect: Rect, id: &str, on: bool, fade: f32, tip: &str) -> (Response, Color32) {
     let resp = ui
-        .interact(rect, ui.id().with("whole_word"), Sense::click())
+        .interact(rect, ui.id().with(id), Sense::click())
         .on_hover_cursor(CursorIcon::PointingHand)
-        .on_hover_text(if applies {
-            "Match whole words only"
-        } else {
-            "Match whole words only (not used with masks)"
-        });
-    let fade = if applies { 1.0 } else { 0.4 };
+        .on_hover_text(tip);
     let visuals = ui.visuals();
-    let painter = ui.painter();
     if on {
-        painter.rect_filled(rect, 3.0, visuals.selection.bg_fill.gamma_multiply(fade));
+        ui.painter()
+            .rect_filled(rect, 3.0, visuals.selection.bg_fill.gamma_multiply(fade));
     } else if resp.hovered() {
-        painter.rect_filled(rect, 3.0, visuals.widgets.hovered.weak_bg_fill);
+        ui.painter().rect_filled(rect, 3.0, visuals.widgets.hovered.weak_bg_fill);
     }
     let color = if on || resp.hovered() {
         visuals.strong_text_color()
     } else {
         visuals.weak_text_color()
-    }
-    .gamma_multiply(fade);
+    };
+    (resp, color.gamma_multiply(fade))
+}
+
+/// The whole-word toggle: "ab" over a bracket, as in code editors; faded
+/// unless it `applies` (a query of masks only ignores it).
+fn whole_word_button(ui: &mut Ui, rect: Rect, on: bool, applies: bool) -> Response {
+    let tip = if applies {
+        "Match whole words only"
+    } else {
+        "Match whole words only (not used with masks)"
+    };
+    let (resp, color) = toggle(ui, rect, "whole_word", on, if applies { 1.0 } else { 0.4 }, tip);
+    let painter = ui.painter();
     let c = rect.center();
     painter.text(c - vec2(0.0, 2.0), Align2::CENTER_CENTER, "ab", FontId::proportional(11.0), color);
     let (y, x0, x1) = (rect.bottom() - 3.0, c.x - 6.0, c.x + 6.0);
@@ -218,5 +239,52 @@ fn whole_word_button(ui: &mut Ui, rect: Rect, on: bool, applies: bool) -> Respon
         vec![pos2(x0, y - 2.5), pos2(x0, y), pos2(x1, y), pos2(x1, y - 2.5)],
         Stroke::new(1.0, color),
     );
+    resp
+}
+
+/// The files / folders filter, cycling through the kinds on click: a page,
+/// a folder, or both side by side; highlighted while it filters.
+fn kind_button(ui: &mut Ui, rect: Rect, kind: ItemKind) -> Response {
+    let tip = match kind {
+        ItemKind::All => "Files and folders (click: files only)",
+        ItemKind::Files => "Files only (click: folders only)",
+        ItemKind::Folders => "Folders only (click: files and folders)",
+    };
+    let (resp, color) = toggle(ui, rect, "item_kind", kind != ItemKind::All, 1.0, tip);
+    let stroke = Stroke::new(1.0, color);
+    let painter = ui.painter();
+    let c = rect.center();
+    // A page 7x10 with a folded corner, centred at `p`.
+    let page = |p: Pos2| {
+        let (l, r, t, b) = (p.x - 3.5, p.x + 3.5, p.y - 5.0, p.y + 5.0);
+        painter.add(Shape::closed_line(
+            vec![pos2(l, t), pos2(r - 3.0, t), pos2(r, t + 3.0), pos2(r, b), pos2(l, b)],
+            stroke,
+        ));
+        painter.line(vec![pos2(r - 3.0, t), pos2(r - 3.0, t + 3.0), pos2(r, t + 3.0)], stroke);
+    };
+    // A folder 11x8 with a tab, centred at `p`.
+    let folder = |p: Pos2| {
+        let (l, r, t, b) = (p.x - 5.5, p.x + 5.5, p.y - 4.0, p.y + 4.0);
+        painter.add(Shape::closed_line(
+            vec![
+                pos2(l, t),
+                pos2(l + 4.0, t),
+                pos2(l + 5.5, t + 1.5),
+                pos2(r, t + 1.5),
+                pos2(r, b),
+                pos2(l, b),
+            ],
+            stroke,
+        ));
+    };
+    match kind {
+        ItemKind::All => {
+            folder(c + vec2(-4.5, 0.5));
+            page(c + vec2(6.0, 0.0));
+        }
+        ItemKind::Files => page(c),
+        ItemKind::Folders => folder(c + vec2(0.0, 0.5)),
+    }
     resp
 }

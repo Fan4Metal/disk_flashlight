@@ -312,6 +312,9 @@ impl Model {
     /// (letters, digits and `_` make words). Only ends of the term that are
     /// word characters are checked, so `.py` finds `a.py` and `a.py.bak` but
     /// not `a.pyd`. Masks are not affected.
+    ///
+    /// `kind` limits matches to files or folders; the others are still
+    /// searched through but neither listed nor counted.
     pub fn search(
         &self,
         root: u32,
@@ -319,13 +322,17 @@ impl Model {
         metric: Metric,
         limit: usize,
         whole_word: bool,
+        kind: ItemKind,
     ) -> Found {
         let groups = Term::parse(query);
         if groups.is_empty() {
             return Found::default();
         }
         let mut lowered = Lowered::default();
-        self.find(root, metric, limit, |name| {
+        self.find(root, metric, limit, |name, is_dir| {
+            if !kind.allows(is_dir) {
+                return false;
+            }
             lowered.reset();
             groups
                 .iter()
@@ -334,7 +341,7 @@ impl Model {
     }
 
     /// Everything under `root` whose name `matches`, for [`Self::search`].
-    fn find(&self, root: u32, metric: Metric, limit: usize, mut matches: impl FnMut(&str) -> bool) -> Found {
+    fn find(&self, root: u32, metric: Metric, limit: usize, mut matches: impl FnMut(&str, bool) -> bool) -> Found {
         let mut best = TopN::new(limit);
         let (mut count, mut total) = (0, 0);
         let mut hits = vec![0u64; self.nodes.len()];
@@ -344,7 +351,7 @@ impl Model {
             for c in self.children(dir) {
                 let n = self.node(c);
                 let m = n.metric(metric);
-                let hit = matches(self.name(c));
+                let hit = matches(self.name(c), n.is_dir);
                 if hit || inside {
                     hits[c as usize] = m;
                 }
@@ -370,6 +377,25 @@ impl Model {
             total,
             ids: best.into_ids(),
             hits,
+        }
+    }
+}
+
+/// Which items [`Model::search`] lists.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ItemKind {
+    #[default]
+    All,
+    Files,
+    Folders,
+}
+
+impl ItemKind {
+    pub fn allows(self, is_dir: bool) -> bool {
+        match self {
+            ItemKind::All => true,
+            ItemKind::Files => !is_dir,
+            ItemKind::Folders => is_dir,
         }
     }
 }
@@ -728,13 +754,13 @@ mod tests {
         let m = Model::from_raw(raw, "X:\\".into(), 1);
         let names = |ids: Vec<u32>| ids.into_iter().map(|i| m.name(i).to_string()).collect::<Vec<_>>();
 
-        let f = m.search(0, "REPORT", Metric::Logical, 10, false);
+        let f = m.search(0, "REPORT", Metric::Logical, 10, false, ItemKind::All);
         assert_eq!((f.count, f.total), (2, 120));
         assert_eq!(names(f.ids), ["report-2025.pdf", "Report.PDF"]);
 
         // Cyrillic, case-insensitive: the folder and a file inside it, which
         // the total does not count twice.
-        let f = m.search(0, "отчё", Metric::Logical, 10, false);
+        let f = m.search(0, "отчё", Metric::Logical, 10, false, ItemKind::All);
         assert_eq!((f.count, f.total), (2, 100));
         let sub = m.find_dir(&["Отчёты"]);
         // Everything in the matching folder is covered, the root partly.
@@ -742,18 +768,28 @@ mod tests {
         assert!(m.children(sub).all(|c| f.hits[c as usize] == m.node(c).size));
         assert_eq!(names(f.ids), ["Отчёты", "ОТЧЁТ.docx"]);
 
-        let f = m.search(0, "REPORT", Metric::Logical, 10, false);
+        let f = m.search(0, "REPORT", Metric::Logical, 10, false, ItemKind::All);
         assert_eq!((f.hits[0], f.hits[sub as usize]), (120, 70));
 
+        // Files only: the folder no longer matches, so only the file counts.
+        let f = m.search(0, "отчё", Metric::Logical, 10, false, ItemKind::Files);
+        assert_eq!((f.count, f.total, f.hits[0]), (1, 30, 30));
+        assert_eq!(names(f.ids), ["ОТЧЁТ.docx"]);
+        // Folders only: the folder covers the file inside it, unlisted.
+        let f = m.search(0, "отчё", Metric::Logical, 10, false, ItemKind::Folders);
+        assert_eq!((f.count, f.total, f.hits[0]), (1, 100, 100));
+        assert_eq!(names(f.ids), ["Отчёты"]);
+        assert!(m.children(sub).all(|c| f.hits[c as usize] == m.node(c).size));
+
         // The limit keeps the largest, the count and total stay complete.
-        let f = m.search(0, ".", Metric::Logical, 2, false);
+        let f = m.search(0, ".", Metric::Logical, 2, false, ItemKind::All);
         assert_eq!((f.count, f.total), (4, 155));
         assert_eq!(names(f.ids), ["report-2025.pdf", "Report.PDF"]);
 
         // Only under the given root; an empty query finds nothing.
         let sub = m.find_dir(&["Отчёты"]);
-        assert_eq!(m.search(sub, "pdf", Metric::Logical, 10, false).count, 1);
-        assert_eq!(m.search(0, "", Metric::Logical, 10, false), Found::default());
+        assert_eq!(m.search(sub, "pdf", Metric::Logical, 10, false, ItemKind::All).count, 1);
+        assert_eq!(m.search(0, "", Metric::Logical, 10, false, ItemKind::All), Found::default());
     }
 
     #[test]
@@ -769,7 +805,7 @@ mod tests {
         let m = Model::from_raw(raw, "X:\\".into(), 1);
         let found = |q: &str| {
             let mut names: Vec<String> = m
-                .search(0, q, Metric::Logical, 10, true)
+                .search(0, q, Metric::Logical, 10, true, ItemKind::All)
                 .ids
                 .into_iter()
                 .map(|i| m.name(i).to_string())
@@ -784,7 +820,7 @@ mod tests {
         assert_eq!(found("py"), ["a.py", "c.py.bak", "py", "pyd.py"]);
         // Non-ASCII names.
         assert_eq!(found("отчёт"), ["Отчёт 2025.doc"]);
-        assert_eq!(m.search(0, "отчёт", Metric::Logical, 10, false).count, 2);
+        assert_eq!(m.search(0, "отчёт", Metric::Logical, 10, false, ItemKind::All).count, 2);
     }
 
     #[test]
@@ -800,7 +836,7 @@ mod tests {
         let m = Model::from_raw(raw, "X:\\".into(), 1);
         let found = |q: &str, whole_word| {
             let mut names: Vec<String> = m
-                .search(0, q, Metric::Logical, 10, whole_word)
+                .search(0, q, Metric::Logical, 10, whole_word, ItemKind::All)
                 .ids
                 .into_iter()
                 .map(|i| m.name(i).to_string())
@@ -833,7 +869,7 @@ mod tests {
         let m = Model::from_raw(raw, "X:\\".into(), 1);
         let found = |q: &str, whole_word| {
             let mut names: Vec<String> = m
-                .search(0, q, Metric::Logical, 10, whole_word)
+                .search(0, q, Metric::Logical, 10, whole_word, ItemKind::All)
                 .ids
                 .into_iter()
                 .map(|i| m.name(i).to_string())
@@ -851,7 +887,7 @@ mod tests {
         // Whole words apply to each part.
         assert_eq!(found("fish 200", true), Vec::<String>::new());
         assert_eq!(found("fish 2003", true), ["Big Fish (2003).mp4"]);
-        assert_eq!(m.search(0, "  \"\" ", Metric::Logical, 10, false), Found::default());
+        assert_eq!(m.search(0, "  \"\" ", Metric::Logical, 10, false, ItemKind::All), Found::default());
         assert!(masks_only("*.mp4 ?.srt") && !masks_only("*.mp4 fish") && !masks_only(""));
         assert!(!masks_only("*.mp4|fish"));
     }
@@ -869,7 +905,7 @@ mod tests {
         let m = Model::from_raw(raw, "X:\\".into(), 1);
         let found = |q: &str| {
             let mut names: Vec<String> = m
-                .search(0, q, Metric::Logical, 10, false)
+                .search(0, q, Metric::Logical, 10, false, ItemKind::All)
                 .ids
                 .into_iter()
                 .map(|i| m.name(i).to_string())

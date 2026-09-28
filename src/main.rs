@@ -264,7 +264,7 @@ fn bench(path: PathBuf, allow_mft: bool) -> anyhow::Result<()> {
     // Name search over the whole scan, run on every keystroke in the UI.
     for query in ["d", "dll", "setup", "а", "*.dll", "*a*b*", "a b c", "*.mp4;*.mkv;*.avi"] {
         let t = Instant::now();
-        let count = model.search(0, query, model::Metric::Physical, 200, false).count;
+        let count = model.search(0, query, model::Metric::Physical, 200, false, model::ItemKind::All).count;
         println!(
             "search {query:>5}: {:.2}ms  ({} matches)",
             t.elapsed().as_secs_f64() * 1e3,
@@ -272,7 +272,7 @@ fn bench(path: PathBuf, allow_mft: bool) -> anyhow::Result<()> {
         );
     }
     // The chart with the matches of a search coloured in.
-    let found = model.search(0, "d", model::Metric::Physical, 200, false);
+    let found = model.search(0, "d", model::Metric::Physical, 200, false, model::ItemKind::All);
     let t = Instant::now();
     let mesh = render::build_mesh(&model, &l, &render::Palette::default(), Some(&found.hits));
     println!(

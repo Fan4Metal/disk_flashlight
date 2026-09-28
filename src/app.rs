@@ -92,6 +92,7 @@ impl App {
         app.chart.palette.mode = settings.color_mode;
         app.tree.follow_hover = settings.follow_in_tree;
         app.search.whole_word = settings.search_whole_word;
+        app.search.kind = settings.search_kind;
         if let Some(p) = initial {
             app.start_scan(p);
         }
@@ -306,6 +307,7 @@ impl eframe::App for App {
             follow_in_tree: self.tree.follow_hover,
             side_view: self.side,
             search_whole_word: self.search.whole_word,
+            search_kind: self.search.kind,
             last_path,
         }
         .save(storage);
