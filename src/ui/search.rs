@@ -9,7 +9,8 @@ use egui::{
     ScrollArea, Sense, Shape, Stroke, Ui, Vec2, pos2, vec2,
 };
 
-use crate::format::{human_size, thousands};
+use crate::format::human_size;
+use crate::i18n::count;
 use crate::model::{ItemKind, Metric, Model, match_ranges};
 use crate::ui::files::{ListSort, ROW_HEIGHT, folder_under, item_row, sort_combo};
 use crate::ui::item_menu;
@@ -76,7 +77,7 @@ impl SearchView {
     ) -> TreeAction {
         let field = ui.add(
             egui::TextEdit::singleline(&mut self.query)
-                .hint_text("Name or mask like *.mp4 (Ctrl+F)")
+                .hint_text(tr!("Name or mask like *.mp4 (Ctrl+F)", "Имя или маска, например *.mp4 (Ctrl+F)"))
                 .desired_width(f32::INFINITY)
                 .margin(Margin {
                     left: 4,
@@ -148,20 +149,29 @@ impl SearchView {
 
         let mut action = TreeAction::default();
         if self.query.trim().is_empty() {
-            ui.weak(
+            ui.weak(tr!(
                 "Type part of a name, or a mask such as *.mp4, to search the whole scan. \
                  Several words must all match, *.mp4;*.mkv (or mp4|mkv) matches either, \
                  \"quotes\" keep a phrase together.",
-            );
+                "Введите часть имени или маску, например *.mp4, чтобы искать по всему скану. \
+                 Несколько слов должны совпасть все, *.mp4;*.mkv (или mp4|mkv) — любое из двух, \
+                 \"кавычки\" объединяют фразу."
+            ));
             return action;
         }
         let summary = match self.count {
-            0 => "No matches".to_string(),
-            1 => format!("1 match ({})", human_size(self.total)),
-            n => format!("{} matches ({})", thousands(n as u64), human_size(self.total)),
+            0 => tr!("No matches", "Совпадений нет").to_string(),
+            n => format!(
+                "{} ({})",
+                count(n as u64, ["match", "matches"], ["совпадение", "совпадения", "совпадений"]),
+                human_size(self.total)
+            ),
         };
         let summary = if self.count > LIMIT {
-            format!("{summary}, the {LIMIT} largest shown")
+            tr!(
+                format!("{summary}, the {LIMIT} largest shown"),
+                format!("{summary}, показаны {LIMIT} самых больших")
+            )
         } else {
             summary
         };
@@ -170,8 +180,13 @@ impl SearchView {
                 sort_combo(ui, "search_sort", &mut self.sort);
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                     ui.add(egui::Label::new(RichText::new(&summary).weak()).truncate())
-                        .on_hover_text(format!(
-                            "{summary}\nTotal size of the matches; files inside a matching folder count once"
+                        .on_hover_text(tr!(
+                            format!(
+                                "{summary}\nTotal size of the matches; files inside a matching folder count once"
+                            ),
+                            format!(
+                                "{summary}\nОбщий размер совпадений; файлы внутри совпавшей папки учитываются один раз"
+                            )
                         ));
                 });
             });
@@ -220,7 +235,7 @@ fn clear_button(ui: &mut Ui, center: Pos2) -> Response {
     let resp = ui
         .interact(rect, ui.id().with("clear_search"), Sense::click())
         .on_hover_cursor(CursorIcon::PointingHand)
-        .on_hover_text("Clear (Esc)");
+        .on_hover_text(tr!("Clear (Esc)", "Очистить (Esc)"));
     let visuals = ui.visuals();
     let fill = if resp.hovered() {
         visuals.text_color()
@@ -264,9 +279,12 @@ fn toggle(ui: &mut Ui, rect: Rect, id: &str, on: bool, fade: f32, tip: &str) -> 
 /// unless it `applies` (a query of masks only ignores it).
 fn whole_word_button(ui: &mut Ui, rect: Rect, on: bool, applies: bool) -> Response {
     let tip = if applies {
-        "Match whole words only"
+        tr!("Match whole words only", "Только целые слова")
     } else {
-        "Match whole words only (not used with masks)"
+        tr!(
+            "Match whole words only (not used with masks)",
+            "Только целые слова (к маскам не применяется)"
+        )
     };
     let (resp, color) = toggle(ui, rect, "whole_word", on, if applies { 1.0 } else { 0.4 }, tip);
     let painter = ui.painter();
@@ -284,9 +302,9 @@ fn whole_word_button(ui: &mut Ui, rect: Rect, on: bool, applies: bool) -> Respon
 /// a folder, or both side by side; highlighted while it filters.
 fn kind_button(ui: &mut Ui, rect: Rect, kind: ItemKind) -> Response {
     let tip = match kind {
-        ItemKind::All => "Files and folders (click: files only)",
-        ItemKind::Files => "Files only (click: folders only)",
-        ItemKind::Folders => "Folders only (click: files and folders)",
+        ItemKind::All => tr!("Files and folders (click: files only)", "Файлы и папки (щелчок: только файлы)"),
+        ItemKind::Files => tr!("Files only (click: folders only)", "Только файлы (щелчок: только папки)"),
+        ItemKind::Folders => tr!("Folders only (click: files and folders)", "Только папки (щелчок: файлы и папки)"),
     };
     let (resp, color) = toggle(ui, rect, "item_kind", kind != ItemKind::All, 1.0, tip);
     let stroke = Stroke::new(1.0, color);

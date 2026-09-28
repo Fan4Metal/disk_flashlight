@@ -48,20 +48,23 @@ pub enum ItemCommand {
 /// lists. The scan root (id 0) cannot be deleted.
 pub fn item_menu(ui: &mut Ui, id: u32) -> Option<ItemCommand> {
     let mut command = None;
-    if ui.button("Open in Explorer").clicked() {
+    if ui.button(tr!("Open in Explorer", "Открыть в Проводнике")).clicked() {
         command = Some(ItemCommand::OpenInExplorer(id));
     }
-    if ui.button("Properties").clicked() {
+    if ui.button(tr!("Properties", "Свойства")).clicked() {
         command = Some(ItemCommand::Properties(id));
     }
-    if ui.add(Button::new("Copy path").shortcut_text("Ctrl+C")).clicked() {
+    if ui
+        .add(Button::new(tr!("Copy path", "Копировать путь")).shortcut_text("Ctrl+C"))
+        .clicked()
+    {
         command = Some(ItemCommand::CopyPath(id));
     }
     ui.separator();
-    let delete = Button::new(RichText::new("Delete…").color(danger_text(ui)));
+    let delete = Button::new(RichText::new(tr!("Delete…", "Удалить…")).color(danger_text(ui)));
     if ui
         .add_enabled(id != 0, delete)
-        .on_hover_text("Move to the Recycle Bin")
+        .on_hover_text(tr!("Move to the Recycle Bin", "Переместить в корзину"))
         .clicked()
     {
         command = Some(ItemCommand::Delete(id));

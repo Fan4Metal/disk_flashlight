@@ -2,6 +2,7 @@
 //! (`%APPDATA%\Disk Flashlight\data\app.ron`). Window size and position and
 //! egui's own state (panel widths) are saved by eframe itself.
 
+use crate::i18n::LangChoice;
 use crate::model::{ItemKind, Metric};
 use crate::render::ColorMode;
 use crate::ui::SideView;
@@ -9,6 +10,7 @@ use crate::ui::files::ListSort;
 
 const METRIC: &str = "metric";
 const THEME: &str = "theme";
+const LANGUAGE: &str = "language";
 const COLOR_MODE: &str = "color_mode";
 const FOLLOW_IN_TREE: &str = "follow_in_tree";
 const LAST_PATH: &str = "last_path";
@@ -24,6 +26,8 @@ const FILES_OLDER_THAN: &str = "files_older_than";
 pub struct Settings {
     /// Light, dark or as in Windows.
     pub theme: egui::ThemePreference,
+    /// Interface language, or the one of Windows.
+    pub language: LangChoice,
     pub metric: Metric,
     pub color_mode: ColorMode,
     pub follow_in_tree: bool,
@@ -49,6 +53,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             theme: egui::ThemePreference::System,
+            language: LangChoice::System,
             metric: Metric::Physical,
             color_mode: ColorMode::default(),
             follow_in_tree: true,
@@ -75,6 +80,12 @@ impl Settings {
                 Some("light") => egui::ThemePreference::Light,
                 Some("dark") => egui::ThemePreference::Dark,
                 _ => d.theme,
+            },
+            language: match get(LANGUAGE).as_deref() {
+                Some("system") => LangChoice::System,
+                Some("en") => LangChoice::En,
+                Some("ru") => LangChoice::Ru,
+                _ => d.language,
             },
             metric: match get(METRIC).as_deref() {
                 Some("physical") => Metric::Physical,
@@ -146,6 +157,12 @@ impl Settings {
             egui::ThemePreference::Dark => "dark",
         };
         storage.set_string(THEME, theme.into());
+        let language = match self.language {
+            LangChoice::System => "system",
+            LangChoice::En => "en",
+            LangChoice::Ru => "ru",
+        };
+        storage.set_string(LANGUAGE, language.into());
         storage.set_string(COLOR_MODE, color_mode.into());
         let side_view = match self.side_view {
             SideView::Folders => "folders",
@@ -212,6 +229,7 @@ mod tests {
     fn round_trip() {
         let s = Settings {
             theme: egui::ThemePreference::Dark,
+            language: LangChoice::Ru,
             metric: Metric::Logical,
             color_mode: ColorMode::Age,
             follow_in_tree: false,

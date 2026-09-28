@@ -54,7 +54,10 @@ impl PathField {
                         .sense(egui::Sense::click()),
                 )
                 .on_hover_cursor(egui::CursorIcon::Text)
-                .on_hover_text("Click to type another path to scan");
+                .on_hover_text(tr!(
+                    "Click to type another path to scan",
+                    "Щёлкните, чтобы ввести другой путь для сканирования"
+                ));
             if label.clicked() {
                 self.editing = true;
                 self.focus = true;
@@ -101,12 +104,12 @@ impl PathField {
         let mut go = false;
         let field = ui
             .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                go = ui.button("Scan").clicked();
+                go = ui.button(tr!("Scan", "Сканировать")).clicked();
                 ui.add(
                     egui::TextEdit::singleline(text)
                         .id(id)
                         .desired_width(ui.available_width())
-                        .hint_text(r"Path to scan, e.g. D:\Projects"),
+                        .hint_text(tr!(r"Path to scan, e.g. D:\Projects", r"Путь для сканирования, например D:\Projects")),
                 )
             })
             .inner;

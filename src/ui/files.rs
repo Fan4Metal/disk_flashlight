@@ -38,9 +38,9 @@ impl ListSort {
 
     fn label(self) -> &'static str {
         match self {
-            ListSort::Size => "Largest first",
-            ListSort::Oldest => "Oldest first",
-            ListSort::Newest => "Newest first",
+            ListSort::Size => tr!("Largest first", "Сначала большие"),
+            ListSort::Oldest => tr!("Oldest first", "Сначала старые"),
+            ListSort::Newest => tr!("Newest first", "Сначала новые"),
         }
     }
 
@@ -77,14 +77,17 @@ pub(super) fn sort_combo(ui: &mut Ui, salt: &str, sort: &mut ListSort) {
             }
         })
         .response
-        .on_hover_text("Order of the list; the date is that of the last change");
+        .on_hover_text(tr!(
+            "Order of the list; the date is that of the last change",
+            "Порядок списка; дата — время последнего изменения"
+        ));
 }
 
 fn age_label(years: u32) -> String {
     match years {
-        0 => "Any age".into(),
-        1 => "Older than 1 year".into(),
-        n => format!("Older than {n} years"),
+        0 => tr!("Any age", "Любой возраст").into(),
+        1 => tr!("Older than 1 year", "Старше 1 года").into(),
+        n => tr!(format!("Older than {n} years"), format!("Старше {n} лет")),
     }
 }
 
@@ -134,7 +137,10 @@ impl FilesView {
                     }
                 })
                 .response
-                .on_hover_text("List only files not modified for this long before the scan");
+                .on_hover_text(tr!(
+                    "List only files not modified for this long before the scan",
+                    "Показывать только файлы, не изменявшиеся столько времени до сканирования"
+                ));
         });
 
         let key = (root, metric, self.older_than, self.sort);
@@ -153,9 +159,14 @@ impl FilesView {
 
         let mut action = TreeAction::default();
         if self.rows.is_empty() {
-            ui.weak(match self.older_than {
-                0 => "No files here".to_string(),
-                _ => format!("No files here {}", age_label(self.older_than).to_lowercase()),
+            let years = self.older_than;
+            ui.weak(match years {
+                0 => tr!("No files here", "Здесь нет файлов").to_string(),
+                1 => tr!("No files here older than 1 year", "Здесь нет файлов старше 1 года").to_string(),
+                n => tr!(
+                    format!("No files here older than {n} years"),
+                    format!("Здесь нет файлов старше {n} лет")
+                ),
             });
             return action;
         }

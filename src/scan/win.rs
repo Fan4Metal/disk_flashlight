@@ -163,6 +163,14 @@ pub fn compressed_size(path: &Path) -> Option<u64> {
     Some(((high as u64) << 32) | low as u64)
 }
 
+/// Whether Windows shows its interface in Russian (primary language of
+/// the user's UI language, `LANG_RUSSIAN`).
+pub fn ui_language_is_russian() -> bool {
+    const LANG_RUSSIAN: u16 = 0x19;
+    let id = unsafe { windows_sys::Win32::Globalization::GetUserDefaultUILanguage() };
+    id & 0x3FF == LANG_RUSSIAN
+}
+
 /// Offset of local time from UTC in seconds, as Windows applies it now
 /// (daylight saving included), for showing dates the way Explorer does.
 pub fn utc_offset() -> i64 {

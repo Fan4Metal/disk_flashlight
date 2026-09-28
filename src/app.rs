@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use egui::{Key, Modifiers};
 
-use crate::format::{human_size, thousands};
+use crate::format::human_size;
 use crate::history::History;
 use crate::model::{Metric, Model, NO_NODE};
 use crate::scan::win::{DiskSpace, Drive};
@@ -96,6 +96,8 @@ impl App {
         cc.egui_ctx
             .all_styles_mut(|s| s.spacing.scroll = egui::style::ScrollStyle::solid());
         let settings = cc.storage.map(Settings::load).unwrap_or_default();
+        // Before any text is made.
+        crate::i18n::set_lang(settings.language.resolve());
         cc.egui_ctx.set_theme(settings.theme);
         let (tx, drive_rx) = crossbeam_channel::unbounded();
         for root in scan::win::drive_roots() {
@@ -132,7 +134,7 @@ impl App {
             tree_hovered: None,
             about: AboutDialog::default(),
             errors: ErrorsView::default(),
-            status: "Ready".into(),
+            status: tr!("Ready", "Готово").into(),
             elevated: scan::win::is_elevated(),
             disk: None,
             confirm_delete: None,
@@ -143,6 +145,7 @@ impl App {
             recent: settings.recent,
         };
         app.chart.palette.mode = settings.color_mode;
+        app.about.lang = settings.language;
         app.tree.follow_hover = settings.follow_in_tree;
         app.search.whole_word = settings.search_whole_word;
         app.search.kind = settings.search_kind;
@@ -162,11 +165,14 @@ impl App {
         if !is_remote(&self.drives, &path) {
             let problem = match std::fs::metadata(&path) {
                 Ok(m) if m.is_dir() => None,
-                Ok(_) => Some("not a folder".to_string()),
+                Ok(_) => Some(tr!("not a folder", "это не папка").to_string()),
                 Err(e) => Some(e.to_string()),
             };
             if let Some(problem) = problem {
-                self.status = format!("Cannot scan {}: {problem}", path.display());
+                self.status = tr!(
+                    format!("Cannot scan {}: {problem}", path.display()),
+                    format!("Не удаётся просканировать {}: {problem}", path.display())
+                );
                 return;
             }
         }
@@ -180,7 +186,7 @@ impl App {
         if self.model.as_ref().is_some_and(|m| !same_path(&m.root_path, &path_str)) {
             self.clear_model();
         }
-        self.status = format!("Scanning {}", path.display());
+        self.status = tr!(format!("Scanning {}", path.display()), format!("Сканирование {}", path.display()));
         self.scan = Some(scan::start(path));
     }
 
@@ -194,7 +200,7 @@ impl App {
             .or_else(|| self.drive.clone())
             .unwrap_or_else(|| self.custom_path.trim().to_string());
         let mut dialog = rfd::FileDialog::new()
-            .set_title("Choose a folder to scan")
+            .set_title(tr!("Choose a folder to scan", "Выберите папку для сканирования"))
             .set_parent(parent);
         if !start.is_empty() {
             dialog = dialog.set_directory(&start);
@@ -254,13 +260,22 @@ impl App {
                 let root = model.node(0);
                 let method = match info.method {
                     Method::Mft => "MFT",
-                    Method::Walk => "directory walk",
+                    Method::Walk => tr!("directory walk", "обход папок"),
                 };
                 // Errors are shown by a link next to the status.
-                self.status = format!(
-                    "Scanned {} files / {} dirs in {secs:.1}s via {method}",
-                    crate::format::thousands(root.files as u64),
-                    crate::format::thousands(root.dirs as u64),
+                let (files, dirs) = (root.files as u64, root.dirs as u64);
+                self.status = tr!(
+                    format!(
+                        "Scanned {} / {} in {secs:.1} s via {method}",
+                        crate::i18n::files(files),
+                        crate::i18n::folders(dirs)
+                    ),
+                    format!(
+                        "Просканировано: {}, {} за {} с ({method})",
+                        crate::i18n::files(files),
+                        crate::i18n::folders(dirs),
+                        format!("{secs:.1}").replace('.', ",")
+                    )
                 );
                 self.errors.set(errors, h.progress.take_failed());
                 if let Some(reason) = info.fallback_reason {
@@ -274,7 +289,7 @@ impl App {
                 self.scan = None;
             }
             Some(Err(e)) => {
-                self.status = format!("Scan failed: {e}");
+                self.status = tr!(format!("Scan failed: {e}"), format!("Сканирование не удалось: {e}"));
                 self.scan = None;
             }
         }
@@ -315,17 +330,20 @@ impl App {
             ItemCommand::Properties(id) => {
                 let path = model.path(id);
                 if !scan::win::show_properties(&path) {
-                    self.status = format!("No properties available for {path}");
+                    self.status = tr!(
+                        format!("No properties available for {path}"),
+                        format!("Свойства недоступны: {path}")
+                    );
                 }
             }
             ItemCommand::CopyPath(id) => {
                 let path = model.path(id);
                 ctx.copy_text(path.clone());
-                self.status = format!("Copied {path}");
+                self.status = tr!(format!("Copied {path}"), format!("Скопирован путь {path}"));
             }
             ItemCommand::Delete(id) if id != 0 => {
                 if self.deleting.is_some() {
-                    self.status = "Another deletion is still running".into();
+                    self.status = tr!("Another deletion is still running", "Предыдущее удаление ещё не закончено").into();
                 } else {
                     self.confirm_delete = Some((model, id));
                 }
@@ -342,15 +360,14 @@ impl App {
         let (mut confirm, mut cancel) = (false, false);
         let modal = egui::Modal::new(egui::Id::new("confirm_delete")).show(ctx, |ui| {
             ui.set_width(420.0);
-            ui.heading("Move to the Recycle Bin?");
+            ui.heading(tr!("Move to the Recycle Bin?", "Переместить в корзину?"));
             ui.add_space(6.0);
             ui.strong(format!("{}{}", model.name(id), if n.is_dir { "\\" } else { "" }));
             ui.label(if n.is_dir {
-                format!(
-                    "{} in {} files and {} folders",
-                    human_size(n.size),
-                    thousands(n.files as u64),
-                    thousands(n.dirs as u64)
+                let (files, dirs) = (crate::i18n::files(n.files as u64), crate::i18n::folders(n.dirs as u64));
+                tr!(
+                    format!("{} in {files} and {dirs}", human_size(n.size)),
+                    format!("{}: {files}, {dirs}", human_size(n.size))
                 )
             } else {
                 human_size(n.size)
@@ -360,12 +377,14 @@ impl App {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 10.0;
                 let text = |s: &str| egui::RichText::new(s).size(16.0);
-                let delete = egui::Button::new(text("Move to Recycle Bin").color(egui::Color32::WHITE))
+                let delete = egui::Button::new(
+                    text(tr!("Move to Recycle Bin", "В корзину")).color(egui::Color32::WHITE),
+                )
                     .fill(DANGER)
                     .min_size(egui::vec2(180.0, 34.0));
                 confirm = ui.add(delete).clicked();
                 cancel = ui
-                    .add(egui::Button::new(text("Cancel")).min_size(egui::vec2(100.0, 34.0)))
+                    .add(egui::Button::new(text(tr!("Cancel", "Отмена"))).min_size(egui::vec2(100.0, 34.0)))
                     .clicked();
             });
         });
@@ -389,10 +408,13 @@ impl App {
             ctx.request_repaint();
         });
         if let Err(e) = spawned {
-            self.status = format!("Could not start deleting: {e}");
+            self.status = tr!(format!("Could not start deleting: {e}"), format!("Не удалось начать удаление: {e}"));
             return;
         }
-        self.status = format!("Moving {path} to the Recycle Bin…");
+        self.status = tr!(
+            format!("Moving {path} to the Recycle Bin…"),
+            format!("Перемещение {path} в корзину…")
+        );
         self.deleting = Some(Deleting { model, id, path, rx });
     }
 
@@ -404,9 +426,18 @@ impl App {
         let gone = std::fs::symlink_metadata(&d.path).is_err();
         let size = human_size(d.model.node(d.id).metric(self.metric));
         self.status = match (gone, result) {
-            (true, _) => format!("Moved {} ({size}) to the Recycle Bin", d.path),
-            (false, Err(e)) => format!("{} was not deleted: {e}", d.path),
-            (false, Ok(())) => format!("{} was not deleted completely; rescan to update", d.path),
+            (true, _) => tr!(
+                format!("Moved {} ({size}) to the Recycle Bin", d.path),
+                format!("Перемещено в корзину: {} ({size})", d.path)
+            ),
+            (false, Err(e)) => tr!(
+                format!("{} was not deleted: {e}", d.path),
+                format!("Не удалось удалить {}: {e}", d.path)
+            ),
+            (false, Ok(())) => tr!(
+                format!("{} was not deleted completely; rescan to update", d.path),
+                format!("Удалено не полностью: {}; для обновления просканируйте заново", d.path)
+            ),
         };
         if gone && self.model.as_ref().is_some_and(|m| Arc::ptr_eq(m, &d.model)) {
             self.set_model(d.model.without(d.id));
@@ -447,7 +478,7 @@ impl App {
             }
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         } else {
-            self.status = "Elevation was cancelled".into();
+            self.status = tr!("Elevation was cancelled", "Запуск с правами администратора отменён").into();
         }
     }
 
@@ -538,6 +569,7 @@ impl eframe::App for App {
         };
         Settings {
             theme: self.theme,
+            language: self.about.lang,
             metric: self.metric,
             color_mode: self.chart.palette.mode,
             follow_in_tree: self.tree.follow_hover,
@@ -592,11 +624,14 @@ impl eframe::App for App {
                         ui.add_space((ui.available_height() * 0.5 - 60.0).max(0.0));
                         ui.add(egui::Spinner::new().size(48.0));
                         ui.add_space(12.0);
-                        ui.heading(format!("Scanning {}", h.path.display()));
+                        ui.heading(tr!(
+                            format!("Scanning {}", h.path.display()),
+                            format!("Сканирование {}", h.path.display())
+                        ));
                         ui.weak(format!(
-                            "{} files, {} folders",
-                            thousands(files),
-                            thousands(dirs)
+                            "{}, {}",
+                            crate::i18n::files(files),
+                            crate::i18n::folders(dirs)
                         ));
                     });
                 }
@@ -608,9 +643,15 @@ impl eframe::App for App {
                         ui.image((icon.id(), egui::vec2(START_ICON, START_ICON)));
                         ui.add_space(14.0);
                         ui.label(egui::RichText::new("Disk Flashlight").size(30.0).strong());
-                        ui.weak(format!("Version {}", crate::VERSION));
+                        ui.weak(tr!(
+                            format!("Version {}", crate::VERSION),
+                            format!("Версия {}", crate::VERSION)
+                        ));
                         ui.add_space(18.0);
-                        ui.label("Select a drive, choose a folder or enter a path to begin");
+                        ui.label(tr!(
+                            "Select a drive, choose a folder or enter a path to begin",
+                            "Выберите диск или папку либо введите путь"
+                        ));
                     });
                 }
             });
@@ -624,11 +665,21 @@ impl eframe::App for App {
             .min_size(160.0)
             .show(root_ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
-                    ui.selectable_value(&mut self.side, SideView::Folders, "Folders");
-                    ui.selectable_value(&mut self.side, SideView::LargestFiles, "Largest files")
-                        .on_hover_text("The 100 largest files under the centre of the chart");
-                    ui.selectable_value(&mut self.side, SideView::Search, "Search")
-                        .on_hover_text("Find files and folders by name (Ctrl+F)");
+                    ui.selectable_value(&mut self.side, SideView::Folders, tr!("Folders", "Папки"));
+                    ui.selectable_value(
+                        &mut self.side,
+                        SideView::LargestFiles,
+                        tr!("Largest files", "Крупные файлы"),
+                    )
+                    .on_hover_text(tr!(
+                        "The 100 largest files under the centre of the chart",
+                        "100 самых больших файлов в центре диаграммы"
+                    ));
+                    ui.selectable_value(&mut self.side, SideView::Search, tr!("Search", "Поиск"))
+                        .on_hover_text(tr!(
+                            "Find files and folders by name (Ctrl+F)",
+                            "Поиск файлов и папок по имени (Ctrl+F)"
+                        ));
                 });
                 ui.separator();
                 let (root, metric, hovered) = (self.nav.root, self.metric, self.chart.hovered);

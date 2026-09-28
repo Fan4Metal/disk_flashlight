@@ -5,7 +5,8 @@ use std::path::PathBuf;
 use egui::{ThemePreference, Ui};
 
 use crate::app::App;
-use crate::format::{human_size, thousands};
+use crate::format::human_size;
+use crate::i18n::{count, files, folders};
 use crate::model::Metric;
 use crate::render::ColorMode;
 
@@ -29,11 +30,10 @@ impl App {
                 .width(160.0)
                 .show_ui(ui, |ui| {
                     for d in &self.drives {
-                        let text = format!(
-                            "{}  {} free of {}",
-                            d.display(),
-                            human_size(d.free),
-                            human_size(d.total)
+                        let (free, total) = (human_size(d.free), human_size(d.total));
+                        let text = tr!(
+                            format!("{}  {free} free of {total}", d.display()),
+                            format!("{}  свободно {free} из {total}", d.display())
                         );
                         let selected = self.drive.as_ref() == Some(&d.root);
                         if ui.selectable_label(selected, text).clicked() {
@@ -42,7 +42,7 @@ impl App {
                     }
                     if !self.recent.is_empty() {
                         ui.separator();
-                        ui.weak("Recent folders");
+                        ui.weak(tr!("Recent folders", "Недавние папки"));
                         let current = self.model.as_ref().map(|m| m.root_path.as_str());
                         for path in &self.recent {
                             let selected = current == Some(path.as_str());
@@ -55,8 +55,8 @@ impl App {
                             }
                         }
                         if ui
-                            .selectable_label(false, egui::RichText::new("Clear recent").weak())
-                            .on_hover_text("Forget the recent folders")
+                            .selectable_label(false, egui::RichText::new(tr!("Clear recent", "Очистить список")).weak())
+                            .on_hover_text(tr!("Forget the recent folders", "Забыть недавние папки"))
                             .clicked()
                         {
                             self.recent.clear();
@@ -64,8 +64,8 @@ impl App {
                     }
                     ui.separator();
                     if ui
-                        .selectable_label(false, "Choose folder…")
-                        .on_hover_text("Pick any folder to scan")
+                        .selectable_label(false, tr!("Choose folder…", "Выбрать папку…"))
+                        .on_hover_text(tr!("Pick any folder to scan", "Выбрать любую папку для сканирования"))
                         .clicked()
                     {
                         // Opened in `App::ui`, which has the window handle.
@@ -85,16 +85,19 @@ impl App {
 
             let scanning = self.scan.is_some();
             if scanning {
-                if ui.button("Cancel").clicked()
+                if ui.button(tr!("Cancel", "Отмена")).clicked()
                     && let Some(h) = &self.scan {
                         h.cancel();
                     }
             } else if ui
                 .add_enabled(
                     self.model.is_some() || self.drive.is_some(),
-                    egui::Button::new("Rescan"),
+                    egui::Button::new(tr!("Rescan", "Обновить")),
                 )
-                .on_hover_text("Scan the current drive or folder again (F5)")
+                .on_hover_text(tr!(
+                    "Scan the current drive or folder again (F5)",
+                    "Просканировать текущий диск или папку заново (F5)"
+                ))
                 .clicked()
             {
                 self.rescan();
@@ -104,7 +107,7 @@ impl App {
                 let icon = ui.id().with("uac_shield");
                 let resp = egui::Button::new((
                     egui::Atom::custom(icon, egui::vec2(11.0, 13.0)),
-                    "Fast scan",
+                    tr!("Fast scan", "Быстрый скан"),
                 ))
                 .atom_ui(ui);
                 if let Some(rect) = resp.rect(icon) {
@@ -113,10 +116,12 @@ impl App {
                 if resp
                     .response
                     .clone()
-                    .on_hover_text(
+                    .on_hover_text(tr!(
                         "Restarts as administrator and scans the whole drive \
                          by reading the NTFS MFT directly",
-                    )
+                        "Перезапускает программу от имени администратора и сканирует \
+                         весь диск, читая NTFS MFT напрямую"
+                    ))
                     .clicked()
                 {
                     self.relaunch_as_admin(ui.ctx());
@@ -127,17 +132,21 @@ impl App {
 
             let has_model = self.model.is_some();
             ui.add_enabled_ui(has_model && self.nav.can_back(), |ui| {
-                if ui.button("◀").on_hover_text("Back (Alt+Left)").clicked() {
+                if ui.button("◀").on_hover_text(tr!("Back (Alt+Left)", "Назад (Alt+Влево)")).clicked() {
                     self.go_back();
                 }
             });
             ui.add_enabled_ui(has_model && self.nav.can_forward(), |ui| {
-                if ui.button("▶").on_hover_text("Forward (Alt+Right)").clicked() {
+                if ui.button("▶").on_hover_text(tr!("Forward (Alt+Right)", "Вперёд (Alt+Вправо)")).clicked() {
                     self.go_forward();
                 }
             });
             ui.add_enabled_ui(has_model && self.nav.root != 0, |ui| {
-                if ui.button("Up").on_hover_text("Up (Backspace)").clicked() {
+                if ui
+                    .button(tr!("Up", "Вверх"))
+                    .on_hover_text(tr!("Up (Backspace)", "На уровень выше (Backspace)"))
+                    .clicked()
+                {
                     self.go_up();
                 }
             });
@@ -145,14 +154,20 @@ impl App {
             ui.separator();
 
             let mut metric = self.metric;
+            let metric_label = |m: Metric| match m {
+                Metric::Physical => tr!("Physical size", "Размер на диске"),
+                Metric::Logical => tr!("Logical size", "Логический размер"),
+            };
             egui::ComboBox::from_id_salt("metric")
-                .selected_text(match metric {
-                    Metric::Physical => "Physical size",
-                    Metric::Logical => "Logical size",
-                })
+                .selected_text(metric_label(metric))
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut metric, Metric::Physical, "Physical size");
-                    ui.selectable_value(&mut metric, Metric::Logical, "Logical size");
+                    ui.selectable_value(&mut metric, Metric::Physical, metric_label(Metric::Physical))
+                        .on_hover_text(tr!(
+                            "Space taken on disk, in whole clusters",
+                            "Место, занятое на диске, в целых кластерах"
+                        ));
+                    ui.selectable_value(&mut metric, Metric::Logical, metric_label(Metric::Logical))
+                        .on_hover_text(tr!("Size of the data in the files", "Размер данных в файлах"));
                 });
             if metric != self.metric {
                 self.metric = metric;
@@ -161,36 +176,52 @@ impl App {
 
             let mut mode = self.chart.palette.mode;
             let label = |m: ColorMode| match m {
-                ColorMode::Size => "Colors: by size",
-                ColorMode::Depth => "Colors: by level",
-                ColorMode::Age => "Colors: by age",
+                ColorMode::Size => tr!("Colors: by size", "Цвета: по размеру"),
+                ColorMode::Depth => tr!("Colors: by level", "Цвета: по уровню"),
+                ColorMode::Age => tr!("Colors: by age", "Цвета: по возрасту"),
             };
             egui::ComboBox::from_id_salt("color_mode")
                 .selected_text(label(mode))
                 .show_ui(ui, |ui| {
                     ui.selectable_value(&mut mode, ColorMode::Size, label(ColorMode::Size))
-                        .on_hover_text("Largest item among its siblings in red, smaller ones towards yellow; paler further out");
+                        .on_hover_text(tr!(
+                            "Largest item among its siblings in red, smaller ones towards yellow; paler further out",
+                            "Самый большой среди соседей элемент красный, меньшие ближе к жёлтому; к краю бледнее"
+                        ));
                     ui.selectable_value(&mut mode, ColorMode::Depth, label(ColorMode::Depth))
-                        .on_hover_text("Colour by ring: red in the centre towards yellow at the rim");
+                        .on_hover_text(tr!(
+                            "Colour by ring: red in the centre towards yellow at the rim",
+                            "Цвет по кольцу: от красного в центре к жёлтому по краю"
+                        ));
                     ui.selectable_value(&mut mode, ColorMode::Age, label(ColorMode::Age))
-                        .on_hover_text(
+                        .on_hover_text(tr!(
                             "Colour by the last change: red for recent, through yellow and green, \
                              to blue for ten years or more; a folder by the newest item inside",
-                        );
+                            "Цвет по последнему изменению: от красного для недавних через жёлтый \
+                             и зелёный к синему для десяти лет и старше; папка — по самому новому \
+                             элементу внутри"
+                        ));
                 });
             if mode != self.chart.palette.mode {
                 self.chart.palette.mode = mode;
                 self.chart.invalidate();
             }
 
-            ui.checkbox(&mut self.tree.follow_hover, "Follow in tree")
-                .on_hover_text("Expand the directory tree to the item under the mouse in the chart");
+            ui.checkbox(&mut self.tree.follow_hover, tr!("Follow in tree", "Следить в дереве"))
+                .on_hover_text(tr!(
+                    "Expand the directory tree to the item under the mouse in the chart",
+                    "Раскрывать дерево папок до элемента под курсором на диаграмме"
+                ));
 
             ui.separator();
 
             // About at the right end; the path takes the space left over.
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("About").on_hover_text("About Disk Flashlight (F1)").clicked() {
+                if ui
+                    .button(tr!("About", "О программе"))
+                    .on_hover_text(tr!("About Disk Flashlight (F1)", "О программе Disk Flashlight (F1)"))
+                    .clicked()
+                {
                     self.about.open = true;
                 }
                 if theme_button(ui, self.theme).clicked() {
@@ -224,18 +255,24 @@ impl App {
     pub fn status_bar(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             if let Some(h) = &self.scan {
-                let (files, dirs, bytes, errors) = h.progress.snapshot();
+                let (n_files, n_dirs, bytes, errors) = h.progress.snapshot();
                 ui.add(egui::Spinner::new().size(14.0));
-                ui.label(format!(
-                    "Scanning {}  —  {} files, {} dirs, {}  ({:.1}s)",
-                    h.path.display(),
-                    thousands(files),
-                    thousands(dirs),
-                    human_size(bytes),
-                    h.started.elapsed().as_secs_f32()
+                let secs = h.started.elapsed().as_secs_f32();
+                let found = format!("{}, {}, {}", files(n_files), folders(n_dirs), human_size(bytes));
+                ui.label(tr!(
+                    format!("Scanning {}  —  {found}  ({secs:.1} s)", h.path.display()),
+                    format!(
+                        "Сканирование {}  —  {found}  ({} с)",
+                        h.path.display(),
+                        format!("{secs:.1}").replace('.', ",")
+                    )
                 ));
                 if errors > 0 {
-                    ui.weak(format!("{} access errors", thousands(errors)));
+                    ui.weak(count(
+                        errors,
+                        ["access error", "access errors"],
+                        ["ошибка доступа", "ошибки доступа", "ошибок доступа"],
+                    ));
                 }
                 return;
             }
@@ -244,13 +281,15 @@ impl App {
                 return;
             };
             let root = model.node(self.nav.root);
-            ui.label(format!(
-                "Dirs: {}   Files: {}   Size: {}   Alloc: {}   Waste: {}",
-                thousands(root.dirs as u64),
-                thousands(root.files as u64),
-                human_size(root.size),
-                human_size(root.alloc),
-                human_size(root.alloc.saturating_sub(root.size)),
+            let (dirs, files) = (
+                crate::format::thousands(root.dirs as u64),
+                crate::format::thousands(root.files as u64),
+            );
+            let (size, alloc) = (human_size(root.size), human_size(root.alloc));
+            let waste = human_size(root.alloc.saturating_sub(root.size));
+            ui.label(tr!(
+                format!("Dirs: {dirs}   Files: {files}   Size: {size}   Alloc: {alloc}   Waste: {waste}"),
+                format!("Папок: {dirs}   Файлов: {files}   Размер: {size}   На диске: {alloc}   Потери: {waste}")
             ));
             if let Some(h) = self.chart.hovered.or(self.tree_hovered) {
                 let n = model.node(h);
@@ -295,9 +334,15 @@ fn theme_button(ui: &mut Ui, theme: ThemePreference) -> egui::Response {
     let icon = ui.id().with("theme_icon");
     let resp = egui::Button::new(egui::Atom::custom(icon, vec2(14.0, 14.0))).atom_ui(ui);
     let tip = match theme {
-        ThemePreference::System => "Theme: as in Windows (click: light)",
-        ThemePreference::Light => "Theme: light (click: dark)",
-        ThemePreference::Dark => "Theme: dark (click: as in Windows)",
+        ThemePreference::System => tr!(
+            "Theme: as in Windows (click: light)",
+            "Тема: как в Windows (щелчок: светлая)"
+        ),
+        ThemePreference::Light => tr!("Theme: light (click: dark)", "Тема: светлая (щелчок: тёмная)"),
+        ThemePreference::Dark => tr!(
+            "Theme: dark (click: as in Windows)",
+            "Тема: тёмная (щелчок: как в Windows)"
+        ),
     };
     let response = resp.response.clone().on_hover_text(tip);
     let Some(rect) = resp.rect(icon) else { return response };

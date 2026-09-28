@@ -9,6 +9,7 @@ use egui::{
 };
 
 use crate::format::{ago, date, human_size, percent, thousands};
+use crate::i18n::{count, ru_plural};
 use crate::layout::{self, Layout, LayoutParams, Sector};
 use crate::model::{Metric, Model, Node};
 use crate::render::{self, ColorMode, Palette};
@@ -350,18 +351,27 @@ impl ChartView {
                 // between them.
                 ui.spacing_mut().item_spacing.y = 2.0;
                 if s.is_free() {
-                    tooltip_title(ui, "Free space");
+                    tooltip_title(ui, tr!("Free space", "Свободное место"));
                     let total = disk.map_or(0, |d| d.total);
                     size_line(ui, s.group_size, None);
-                    ui.label(format!("{} of {}", percent(s.group_size, total), human_size(total)));
+                    let (share, total) = (percent(s.group_size, total), human_size(total));
+                    ui.label(tr!(format!("{share} of {total}"), format!("{share} от {total}")));
                 } else if s.is_group() {
-                    tooltip_title(ui, &format!("{} smaller items", thousands(s.count as u64)));
+                    tooltip_title(
+                        ui,
+                        &count(
+                            s.count as u64,
+                            ["smaller item", "smaller items"],
+                            ["мелкий элемент", "мелких элемента", "мелких элементов"],
+                        ),
+                    );
                     size_line(ui, s.group_size, None);
                     ui.label(shares(model, root, s.node, s.group_size, metric));
                     matches_line(ui, model, layout, &s, hits);
                     ui.add_space(TOOLTIP_GAP);
-                    ui.weak(format!("in {}", model.path(s.node)));
-                    ui.weak("Click or scroll to zoom in");
+                    let path = model.path(s.node);
+                    ui.weak(tr!(format!("in {path}"), format!("в {path}")));
+                    ui.weak(tr!("Click or scroll to zoom in", "Щелчок или колесо мыши — увеличить"));
                 } else {
                     let n = model.node(s.node);
                     tooltip_title(ui, model.name(s.node));
@@ -377,7 +387,7 @@ impl ChartView {
                     }
                     ui.weak(model.path(s.node));
                     if !n.is_dir && n.parent != root {
-                        ui.weak("Click to open its folder");
+                        ui.weak(tr!("Click to open its folder", "Щелчок — перейти в его папку"));
                     }
                 }
             });
@@ -403,7 +413,10 @@ fn reset_button(ui: &mut Ui, rect: Rect, zoom: f32) -> Response {
     let resp = ui
         .interact(btn, ui.id().with("reset_view"), Sense::click())
         .on_hover_cursor(CursorIcon::PointingHand)
-        .on_hover_text("Reset the view (or double-click with the middle mouse button)");
+        .on_hover_text(tr!(
+            "Reset the view (or double-click with the middle mouse button)",
+            "Исходный вид (или двойной щелчок средней кнопкой мыши)"
+        ));
     let visuals = ui.style().interact(&resp);
     let painter = ui.painter().with_clip_rect(rect);
     painter.rect(btn, 4.0, visuals.weak_bg_fill, visuals.bg_stroke, StrokeKind::Inside);
@@ -446,28 +459,32 @@ fn size_line(ui: &mut Ui, size: u64, alloc: Option<u64>) {
         ui.spacing_mut().item_spacing.x = 6.0;
         ui.label(egui::RichText::new(human_size(size)).size(15.0).strong());
         if let Some(alloc) = alloc.filter(|&a| human_size(a) != human_size(size)) {
-            ui.weak(format!("{} on disk", human_size(alloc)));
+            let alloc = human_size(alloc);
+            ui.weak(tr!(format!("{alloc} on disk"), format!("{alloc} на диске")));
         }
     });
 }
 
 /// `1 234 files in 56 folders`, or `14 files` without subfolders.
 fn counts(files: u32, dirs: u32) -> String {
-    let files = match files {
-        1 => "1 file".to_string(),
-        n => format!("{} files", thousands(n as u64)),
-    };
-    match dirs {
-        0 => files,
-        1 => format!("{files} in 1 folder"),
-        n => format!("{files} in {} folders", thousands(n as u64)),
+    let (files, n) = (crate::i18n::files(files as u64), dirs as u64);
+    if n == 0 {
+        return files;
     }
+    let dirs = thousands(n);
+    tr!(
+        format!("{files} in {}", crate::i18n::folders(n)),
+        format!("{files} в {dirs} {}", ru_plural(n, "папке", "папках", "папках"))
+    )
 }
 
 /// Tooltip line with the share `part` bytes take of `parent` and, deeper
 /// in, of the centre `root`: `12% of Users, 3.4% of C:`.
 fn shares(model: &Model, root: u32, parent: u32, part: u64, metric: Metric) -> String {
-    let of = |id: u32| format!("{} of {}", percent(part, model.node(id).metric(metric)), model.name(id));
+    let of = |id: u32| {
+        let (share, name) = (percent(part, model.node(id).metric(metric)), model.name(id));
+        tr!(format!("{share} of {name}"), format!("{share} от {name}"))
+    };
     if parent == root {
         of(root)
     } else {
@@ -479,7 +496,11 @@ fn shares(model: &Model, root: u32, parent: u32, part: u64, metric: Metric) -> S
 /// newest time inside it. `None` when the time is unknown.
 pub fn modified_line(model: &Model, n: &Node) -> Option<String> {
     (n.modified != 0).then(|| {
-        let label = if n.is_dir { "Last change inside" } else { "Modified" };
+        let label = if n.is_dir {
+            tr!("Last change inside", "Последнее изменение внутри")
+        } else {
+            tr!("Modified", "Последнее изменение")
+        };
         let age = ago(model.scanned_at.saturating_sub(n.modified));
         format!("{label}: {} ({age})", date(n.modified))
     })
@@ -501,7 +522,7 @@ fn age_legend(painter: &egui::Painter, rect: Rect, palette: &Palette) {
     painter.text(
         pos2(left, backing.top() + 5.0),
         Align2::LEFT_TOP,
-        "Last modified",
+        tr!("Last modified", "Последнее изменение"),
         FontId::proportional(12.0),
         text,
     );
@@ -521,16 +542,24 @@ fn age_legend(painter: &egui::Painter, rect: Rect, palette: &Palette) {
         }
     }
     painter.add(Shape::mesh(mesh));
-    let ticks = [(0.0, "now"), (7.0, "week"), (30.0, "month"), (365.0, "year"), (3650.0, "10 years")];
-    for (days, label) in ticks {
+    let ticks = [
+        (0.0, tr!("now", "сейчас")),
+        (7.0, tr!("week", "нед.")),
+        (30.0, tr!("month", "мес.")),
+        (365.0, tr!("year", "год")),
+        (3650.0, tr!("10 years", "10 лет")),
+    ];
+    let last = ticks.len() - 1;
+    for (i, (days, label)) in ticks.into_iter().enumerate() {
         let x = bar.left() + WIDTH * palette.age_t_of_days(days);
         painter.line_segment(
             [pos2(x, bar.bottom()), pos2(x, bar.bottom() + 3.0)],
             Stroke::new(1.0, text),
         );
-        let align = match label {
-            "now" => Align2::LEFT_TOP,
-            "10 years" => Align2::RIGHT_TOP,
+        // The ends stay inside the bar.
+        let align = match i {
+            0 => Align2::LEFT_TOP,
+            _ if i == last => Align2::RIGHT_TOP,
             _ => Align2::CENTER_TOP,
         };
         painter.text(pos2(x, bar.bottom() + 3.0), align, label, small.clone(), text);
@@ -548,6 +577,10 @@ fn matches_line(ui: &mut Ui, model: &Model, layout: &Layout, s: &Sector, hits: O
             model.node(s.node).metric(layout.metric)
         };
         let bytes = (share as f64 * size as f64).round() as u64;
-        ui.label(format!("Search matches: {} ({:.0}%)", human_size(bytes), share * 100.0));
+        let (bytes, share) = (human_size(bytes), format!("{:.0}%", share * 100.0));
+        ui.label(tr!(
+            format!("Search matches: {bytes} ({share})"),
+            format!("Совпадения поиска: {bytes} ({share})")
+        ));
     }
 }

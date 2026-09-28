@@ -129,7 +129,7 @@ pub fn scan(root: &Path, progress: &Progress) -> anyhow::Result<Model> {
     read_and_parse(vol, &runs, cluster, mft_len, rec_size, &mut recs, progress)?;
     let t_read = t.elapsed();
     if progress.cancel.load(Relaxed) {
-        bail!("scan cancelled");
+        bail!(tr!("scan cancelled", "сканирование отменено"));
     }
 
     let t = Instant::now();

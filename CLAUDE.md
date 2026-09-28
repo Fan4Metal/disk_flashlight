@@ -46,6 +46,8 @@ Data flows in one direction: `scan` → `model` → `layout` → `render` → `u
 
 ## Conventions
 
+- The interface is in English and Russian (`i18n.rs`). Every user-visible string goes through `tr!("English", "Русский")`, which picks by the current language and evaluates only that arm (so `format!` in both arms is fine); counts with words use `i18n::count` / `files` / `folders` (Russian has three plural forms, `i18n::ru_plural`), sizes, percentages, dates and ages come from `format` (`_in(lang, …)` variants for tests, which must not rely on the global language). The language is a global atomic set from `Settings::language` (`LangChoice`: System follows `win::ui_language_is_russian`, `GetUserDefaultUILanguage`, hence the `Win32_Globalization` feature) in `App::new` before any text is made, and changed from the About window. Log messages, CLI output (`--bench`, `--help`) and technical scanner errors stay English.
+
 - Commits in this repository end with a `Co-Authored-By:` trailer naming the Claude model doing the work, e.g. `Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>` (this overrides the global "no Co-Authored-By" rule for this repo only).
 - Keep the model and layout allocation-free on hot paths; the chart must stay responsive on ~1M-node trees (reference: C:\ with 917k nodes scans in ~8.5 s cold, layout + mesh ≈ 1 ms).
 - The version comes from `Cargo.toml` via `main::VERSION` and appears in the window title (`Disk Flashlight 0.1.0`), `--version`, the exe version resource and the installer; bump it only in `Cargo.toml`. Match the window by title prefix, not exact title. The release exe is GUI-subsystem, so CLI modes (`--bench`, `--version`, `--help`) call `AttachConsole` to print when run from a console.

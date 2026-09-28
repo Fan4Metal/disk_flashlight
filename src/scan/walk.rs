@@ -67,7 +67,10 @@ impl Progress {
 pub fn scan(root: &Path, progress: &Progress) -> anyhow::Result<Model> {
     let meta = std::fs::metadata(root).map_err(|e| anyhow::anyhow!("{}: {e}", root.display()))?;
     if !meta.is_dir() {
-        anyhow::bail!("{} is not a folder", root.display());
+        anyhow::bail!(tr!(
+            format!("{} is not a folder", root.display()),
+            format!("{} — это не папка", root.display())
+        ));
     }
     let root_path = root.to_string_lossy().into_owned();
     let cluster = super::win::cluster_size(root);
@@ -75,7 +78,7 @@ pub fn scan(root: &Path, progress: &Progress) -> anyhow::Result<Model> {
     let modified = meta.modified().ok().map_or(0, unix_time);
     let raw = scan_dir(root, name, modified, cluster, progress);
     if progress.cancel.load(Relaxed) {
-        anyhow::bail!("scan cancelled");
+        anyhow::bail!(tr!("scan cancelled", "сканирование отменено"));
     }
     Ok(Model::from_raw(raw, root_path, cluster))
 }
