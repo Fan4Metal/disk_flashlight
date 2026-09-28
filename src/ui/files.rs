@@ -190,8 +190,10 @@ impl FilesView {
     }
 }
 
-/// Background of the parts of a name that a search matched.
+/// Background of the parts of a name that a search matched, on the light
+/// and on the dark theme.
 const MARK_BG: egui::Color32 = egui::Color32::from_rgb(255, 226, 130);
+const MARK_BG_DARK: egui::Color32 = egui::Color32::from_rgb(112, 86, 18);
 
 /// Weak `text` right-aligned in a cell `width` wide, so that the column
 /// lines up whatever the width of its values.
@@ -228,11 +230,12 @@ pub(super) fn item_row(
             ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                 let mut text = egui::text::LayoutJob::default();
                 let style = ui.style();
+                let mark = if style.visuals.dark_mode { MARK_BG_DARK } else { MARK_BG };
                 let name = model.name(id);
                 let mut piece = |s: &str, marked: bool| {
                     let mut rich = RichText::new(s);
                     if marked {
-                        rich = rich.background_color(MARK_BG);
+                        rich = rich.background_color(mark);
                     }
                     rich.append_to(&mut text, style, egui::FontSelection::Default, Align::Center);
                 };

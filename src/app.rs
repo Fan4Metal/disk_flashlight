@@ -22,6 +22,8 @@ use crate::ui::search::SearchView;
 use crate::ui::tree::TreeView;
 
 pub struct App {
+    /// Light, dark or as in Windows (the toolbar's theme button).
+    pub theme: egui::ThemePreference,
     pub model: Option<Arc<Model>>,
     pub scan: Option<ScanHandle>,
     /// Drives for the picker, by letter; each is added once its (possibly
@@ -72,12 +74,12 @@ struct Deleting {
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, initial: Option<PathBuf>) -> Self {
-        cc.egui_ctx.set_visuals(egui::Visuals::light());
         // Solid scroll bars take their own width; the default floating ones
         // are drawn over the right edge of list rows (sizes).
         cc.egui_ctx
             .all_styles_mut(|s| s.spacing.scroll = egui::style::ScrollStyle::solid());
         let settings = cc.storage.map(Settings::load).unwrap_or_default();
+        cc.egui_ctx.set_theme(settings.theme);
         let (tx, drive_rx) = crossbeam_channel::unbounded();
         for root in scan::win::drive_roots() {
             let (tx, ctx) = (tx.clone(), cc.egui_ctx.clone());
@@ -96,6 +98,7 @@ impl App {
         // network drive would start working unasked).
         let last_path = settings.last_path.unwrap_or_default();
         let mut app = Self {
+            theme: settings.theme,
             model: None,
             scan: None,
             drives: Vec::new(),
@@ -515,6 +518,7 @@ impl eframe::App for App {
             None => Some(self.custom_path.trim().to_string()),
         };
         Settings {
+            theme: self.theme,
             metric: self.metric,
             color_mode: self.chart.palette.mode,
             follow_in_tree: self.tree.follow_hover,

@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use egui::Ui;
+use egui::{ThemePreference, Ui};
 
 use crate::app::App;
 use crate::format::{human_size, thousands};
@@ -164,6 +164,14 @@ impl App {
                 if ui.button("About").on_hover_text("About Disk Flashlight (F1)").clicked() {
                     self.about.open = true;
                 }
+                if theme_button(ui, self.theme).clicked() {
+                    self.theme = match self.theme {
+                        ThemePreference::System => ThemePreference::Light,
+                        ThemePreference::Light => ThemePreference::Dark,
+                        ThemePreference::Dark => ThemePreference::System,
+                    };
+                    ui.ctx().set_theme(self.theme);
+                }
                 ui.separator();
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     self.path_field(ui);
@@ -231,6 +239,55 @@ impl App {
             });
         });
     }
+}
+
+/// The theme switch: a half-filled circle while following Windows, a sun
+/// for the light theme, a moon for the dark one; a click moves on to the
+/// next of the three.
+fn theme_button(ui: &mut Ui, theme: ThemePreference) -> egui::Response {
+    use egui::{Shape, Stroke, pos2, vec2};
+    let icon = ui.id().with("theme_icon");
+    let resp = egui::Button::new(egui::Atom::custom(icon, vec2(14.0, 14.0))).atom_ui(ui);
+    let tip = match theme {
+        ThemePreference::System => "Theme: as in Windows (click: light)",
+        ThemePreference::Light => "Theme: light (click: dark)",
+        ThemePreference::Dark => "Theme: dark (click: as in Windows)",
+    };
+    let response = resp.response.clone().on_hover_text(tip);
+    let Some(rect) = resp.rect(icon) else { return response };
+    let visuals = ui.style().interact(&response);
+    let (color, fill) = (visuals.text_color(), visuals.weak_bg_fill);
+    let painter = ui.painter();
+    let c = rect.center();
+    match theme {
+        ThemePreference::System => {
+            let r = 5.5;
+            painter.circle_stroke(c, r, Stroke::new(1.3, color));
+            // Left half filled: a convex half disc.
+            let half: Vec<_> = (0..=16)
+                .map(|i| {
+                    let a = std::f32::consts::PI * (0.5 + i as f32 / 16.0);
+                    c + vec2(r * a.cos(), -r * a.sin())
+                })
+                .collect();
+            painter.add(Shape::convex_polygon(half, color, Stroke::NONE));
+        }
+        ThemePreference::Light => {
+            painter.circle_filled(c, 3.2, color);
+            for i in 0..8 {
+                let a = std::f32::consts::TAU * i as f32 / 8.0;
+                let d = vec2(a.cos(), a.sin());
+                painter.line_segment([c + d * 5.0, c + d * 6.8], Stroke::new(1.3, color));
+            }
+        }
+        ThemePreference::Dark => {
+            // A crescent: a disc with another in the button's colour over
+            // its upper right.
+            painter.circle_filled(c, 6.0, color);
+            painter.circle_filled(pos2(c.x + 3.0, c.y - 2.2), 5.0, fill);
+        }
+    }
+    response
 }
 
 /// The Windows UAC shield (blue and yellow quarters), drawn into `rect` to

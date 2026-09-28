@@ -30,10 +30,15 @@ pub enum ColorMode {
 }
 
 /// Colours are built with egui's `Hsva`, which works in linear RGB; the
-/// conversion to sRGB lightens them, which gives the pastel look.
+/// conversion to sRGB lightens them, which gives the pastel look. There is
+/// one palette per theme ([`Palette::for_theme`]): on the dark one the
+/// sectors are deeper and fade towards the dark background with depth, as
+/// on the light one they fade towards white.
 #[derive(Clone, Copy, Debug)]
 pub struct Palette {
     pub mode: ColorMode,
+    /// Made for the dark theme.
+    pub dark: bool,
     pub sat_dir: f32,
     pub sat_file: f32,
     pub val_even: f32,
@@ -48,8 +53,12 @@ pub struct Palette {
     pub hue_smallest: f32,
     /// Share of saturation lost by the outermost visible ring (0 = none).
     pub fade_max: f32,
-    /// Saturation of "N smaller items" group sectors.
+    /// Share of brightness lost by the outermost visible ring: the fade
+    /// towards a dark background.
+    pub fade_val: f32,
+    /// Saturation and brightness of "N smaller items" group sectors.
     pub sat_group: f32,
+    pub val_group: f32,
     // --- Age mode ---
     /// Hue (degrees) of an item modified just before the scan.
     pub hue_new: f32,
@@ -67,12 +76,70 @@ pub struct Palette {
     /// How much colour a folder with a sliver of matches gets, so that it
     /// stands apart from folders without any.
     pub partial_min: f32,
+    // --- Around the sectors ---
+    pub background: Color32,
+    /// Circles at the ring boundaries.
+    pub guide: Color32,
+    /// Centre disc and its two lines of text.
+    pub center: Color32,
+    pub center_text: Color32,
+    pub center_subtext: Color32,
+    /// Laid over the sector under the mouse, and its outline.
+    pub hover_overlay: Color32,
+    pub outline: Color32,
+    /// Outline of the item hovered in the tree or a list.
+    pub external: Color32,
+    /// Legend of the age mode: text and the backing behind it.
+    pub legend_text: Color32,
+    pub legend_backing: Color32,
 }
 
 impl Default for Palette {
     fn default() -> Self {
+        Self::for_theme(false)
+    }
+}
+
+impl Palette {
+    /// The palette of the dark or the light theme.
+    pub fn for_theme(dark: bool) -> Self {
+        let light = Self::light();
+        if !dark {
+            return light;
+        }
+        Self {
+            dark: true,
+            sat_dir: 0.90,
+            sat_file: 0.72,
+            val_even: 0.62,
+            val_odd: 0.45,
+            // Yellow turns olive when dark: stop at gold.
+            hue_smallest: 48.0,
+            fade_max: 0.45,
+            fade_val: 0.70,
+            sat_group: 0.15,
+            val_group: 0.13,
+            unknown: Color32::from_gray(85),
+            free: Color32::from_rgb(44, 52, 62),
+            dimmed: Color32::from_gray(40),
+            background: Color32::from_gray(20),
+            guide: Color32::from_gray(40),
+            center: Color32::from_gray(64),
+            center_text: Color32::from_gray(235),
+            center_subtext: Color32::from_gray(195),
+            hover_overlay: Color32::from_white_alpha(45),
+            outline: Color32::from_gray(235),
+            external: Color32::from_rgb(110, 175, 255),
+            legend_text: Color32::from_gray(205),
+            legend_backing: Color32::from_black_alpha(200),
+            ..light
+        }
+    }
+
+    fn light() -> Self {
         Self {
             mode: ColorMode::default(),
+            dark: false,
             sat_dir: 0.92,
             sat_file: 0.72,
             val_even: 0.92,
@@ -81,7 +148,9 @@ impl Default for Palette {
             hue_largest: 0.0,
             hue_smallest: 56.0,
             fade_max: 0.6,
+            fade_val: 0.0,
             sat_group: 0.22,
+            val_group: 0.78,
             hue_new: 0.0,
             hue_old: 225.0,
             age_span_days: 3650.0,
@@ -89,11 +158,19 @@ impl Default for Palette {
             free: Color32::from_rgb(218, 228, 238),
             dimmed: Color32::from_gray(246),
             partial_min: 0.3,
+            background: Color32::WHITE,
+            guide: Color32::from_gray(225),
+            center: Color32::from_gray(118),
+            center_text: Color32::WHITE,
+            center_subtext: Color32::from_gray(235),
+            hover_overlay: Color32::from_white_alpha(70),
+            outline: Color32::from_gray(30),
+            external: Color32::from_rgb(20, 90, 200),
+            legend_text: Color32::from_gray(80),
+            legend_backing: Color32::from_white_alpha(215),
         }
     }
-}
 
-impl Palette {
     /// Position of an item modified at `modified` on the age scale, from 0
     /// (at `scanned_at`) to 1 (`age_span_days` before it or earlier);
     /// `None` when the time is unknown.
@@ -106,20 +183,27 @@ impl Palette {
         (days.ln_1p() / self.age_span_days.ln_1p()).clamp(0.0, 1.0)
     }
 
-    /// Colour of age scale position `t` with saturation `sat`, for the
-    /// chart and its legend.
-    pub fn age_color(&self, t: f32, sat: f32) -> Color32 {
+    /// Colour of age scale position `t` with saturation `sat` and
+    /// brightness `val`, for the chart and its legend.
+    pub fn age_color(&self, t: f32, sat: f32, val: f32) -> Color32 {
         let hue = self.hue_new + (self.hue_old - self.hue_new) * t;
-        Color32::from(Hsva::new(hue / 360.0, sat, self.val_even, 1.0))
+        Color32::from(Hsva::new(hue / 360.0, sat, val, 1.0))
     }
 
-    /// Share of saturation lost towards white by `ring` of `n_rings`.
-    fn fade(&self, ring: usize, n_rings: usize) -> f32 {
+    /// How far out `ring` of `n_rings` is, from 0 (innermost) to 1.
+    fn depth(ring: usize, n_rings: usize) -> f32 {
         if n_rings > 1 {
-            self.fade_max * ring.min(n_rings - 1) as f32 / (n_rings - 1) as f32
+            ring.min(n_rings - 1) as f32 / (n_rings - 1) as f32
         } else {
             0.0
         }
+    }
+
+    /// Saturation `sat` and brightness `val` faded towards the background
+    /// by `strength` (1 = fully) for `ring` of `n_rings`.
+    fn faded(&self, sat: f32, val: f32, strength: f32, ring: usize, n_rings: usize) -> (f32, f32) {
+        let f = Self::depth(ring, n_rings) * strength;
+        (sat * (1.0 - self.fade_max * f), val * (1.0 - self.fade_val * f))
     }
 
     /// Colour of the `index`-th sector of `ring` (0 = innermost) when
@@ -139,8 +223,11 @@ impl Palette {
         match self.mode {
             ColorMode::Age => match age {
                 // Half the fade of the size mode: the hue carries the
-                // meaning here, and pale hues are harder to tell apart.
-                Some(t) => self.age_color(t, sat * (1.0 - 0.5 * self.fade(ring, n_rings))),
+                // meaning here, and faded hues are harder to tell apart.
+                Some(t) => {
+                    let (sat, val) = self.faded(sat, self.val_even, 0.5, ring, n_rings);
+                    self.age_color(t, sat, val)
+                }
                 None => self.unknown,
             },
             ColorMode::Depth => {
@@ -155,9 +242,10 @@ impl Palette {
             ColorMode::Size => {
                 let rel = rel.clamp(0.0, 1.0);
                 let hue = self.hue_smallest + (self.hue_largest - self.hue_smallest) * rel;
-                // Linear fade with depth, like OverDisk, but towards white.
-                let fade = self.fade(ring, n_rings);
-                Color32::from(Hsva::new(hue / 360.0, sat * (1.0 - fade), self.val_even, 1.0))
+                // Linear fade with depth, like OverDisk, but towards the
+                // background.
+                let (sat, val) = self.faded(sat, self.val_even, 1.0, ring, n_rings);
+                Color32::from(Hsva::new(hue / 360.0, sat, val, 1.0))
             }
         }
     }
@@ -171,8 +259,8 @@ impl Palette {
             // A near grey: any hue would read as an age.
             ColorMode::Age => (40.0, 0.08),
         };
-        let fade = self.fade(ring, n_rings);
-        Color32::from(Hsva::new(hue / 360.0, sat * (1.0 - fade), self.val_odd, 1.0))
+        let (sat, val) = self.faded(sat, self.val_group, 1.0, ring, n_rings);
+        Color32::from(Hsva::new(hue / 360.0, sat, val, 1.0))
     }
 
     /// `color` of a sector while search matches are highlighted; `share` is
@@ -446,5 +534,25 @@ mod tests {
         assert_eq!(p.color(0, 0, 3, 1.0, None, true), p.unknown);
         // Size and position do not matter, only the age.
         assert_eq!(p.color(1, 0, 3, 1.0, Some(0.5), true), p.color(1, 1, 3, 0.1, Some(0.5), true));
+    }
+
+    #[test]
+    fn dark_palette_is_deeper_and_fades_towards_the_background() {
+        let (light, dark) = (Palette::for_theme(false), Palette::for_theme(true));
+        assert!(!light.dark && dark.dark);
+        let lum = |c: Color32| c.r() as u32 + c.g() as u32 + c.b() as u32;
+        for mode in [ColorMode::Size, ColorMode::Depth, ColorMode::Age] {
+            let (l, d) = (Palette { mode, ..light }, Palette { mode, ..dark });
+            let (cl, cd) = (l.color(0, 0, 4, 1.0, Some(0.3), true), d.color(0, 0, 4, 1.0, Some(0.3), true));
+            assert!(lum(cd) + 20 < lum(cl), "{mode:?}: dark colours are deeper");
+            assert!(lum(cd) > lum(dark.background) + 150, "{mode:?}: but stand out from the background");
+        }
+        // Further out the dark palette gets darker, the light one lighter.
+        let (inner, outer) = (dark.color(0, 0, 4, 1.0, None, true), dark.color(3, 0, 4, 1.0, None, true));
+        assert!(lum(outer) < lum(inner));
+        let (inner, outer) = (light.color(0, 0, 4, 1.0, None, true), light.color(3, 0, 4, 1.0, None, true));
+        assert!(lum(outer) > lum(inner));
+        // Search: non-matches sink into the background.
+        assert!(lum(dark.dimmed) < lum(dark.color(2, 0, 4, 0.1, None, false)));
     }
 }

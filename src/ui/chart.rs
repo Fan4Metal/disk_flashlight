@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use egui::{
-    Align2, Color32, CursorIcon, FontId, Mesh, PointerButton, Pos2, Rect, Response, Sense, Shape, Stroke,
+    Align2, CursorIcon, FontId, Mesh, PointerButton, Pos2, Rect, Response, Sense, Shape, Stroke,
     StrokeKind, Ui, Vec2, pos2, vec2,
 };
 
@@ -42,6 +42,7 @@ struct CacheKey {
     free: u64,
     /// Generation of the search matches coloured in, 0 for none.
     hits: u64,
+    dark: bool,
 }
 
 pub struct ChartView {
@@ -133,6 +134,14 @@ impl ChartView {
             self.view_root = Some(root);
             self.reset_view();
         }
+        // The palette follows the theme, keeping the colour mode.
+        let dark = ui.visuals().dark_mode;
+        if self.palette.dark != dark {
+            self.palette = Palette {
+                mode: self.palette.mode,
+                ..Palette::for_theme(dark)
+            };
+        }
 
         // Wheel: zoom towards the cursor.
         if response.hovered() {
@@ -168,6 +177,7 @@ impl ChartView {
             ),
             free: disk.map_or(0, |d| d.free),
             hits: hits.map_or(0, |(generation, _)| generation),
+            dark,
         };
         if self.key != Some(key) || self.layout.is_none() {
             let l = layout::build_with_free(
@@ -190,8 +200,9 @@ impl ChartView {
 
         // Background and guide rings.
         let painter = painter.with_clip_rect(rect);
-        painter.rect_filled(rect, 0.0, Color32::WHITE);
-        let guide = Stroke::new(1.0, Color32::from_gray(225));
+        let pal = self.palette;
+        painter.rect_filled(rect, 0.0, pal.background);
+        let guide = Stroke::new(1.0, pal.guide);
         for &(_, r_out) in &layout.radii {
             for arc in render::guide_arcs(layout, r_out) {
                 painter.add(Shape::line(arc, guide));
@@ -204,7 +215,7 @@ impl ChartView {
         let r0 = layout.center_radius();
         painter.add(Shape::mesh(Arc::new(render::disc_mesh(
             layout,
-            Color32::from_gray(118),
+            pal.center,
         ))));
         let root_node = model.node(root);
         let title = model.name(root);
@@ -214,14 +225,14 @@ impl ChartView {
             Align2::CENTER_CENTER,
             title,
             font.clone(),
-            Color32::WHITE,
+            pal.center_text,
         );
         painter.text(
             center + egui::vec2(0.0, font.size * 0.55),
             Align2::CENTER_CENTER,
             human_size(root_node.metric(metric)),
             FontId::proportional((font.size * 0.7).max(11.0)),
-            Color32::from_gray(235),
+            pal.center_subtext,
         );
 
         if self.palette.mode == ColorMode::Age {
@@ -250,10 +261,10 @@ impl ChartView {
         };
 
         if let Some((ring, i)) = hit {
-            let overlay = render::highlight_mesh(layout, ring, i, Color32::from_white_alpha(70));
+            let overlay = render::highlight_mesh(layout, ring, i, pal.hover_overlay);
             painter.add(Shape::mesh(Arc::new(overlay)));
             for outline in render::sector_outline(layout, ring, i) {
-                painter.add(Shape::closed_line(outline, Stroke::new(1.5, Color32::from_gray(30))));
+                painter.add(Shape::closed_line(outline, Stroke::new(1.5, pal.outline)));
             }
         }
         if let Some(ext) = external_highlight
@@ -263,7 +274,7 @@ impl ChartView {
             for outline in render::sector_outline(layout, ring, i) {
                 painter.add(Shape::closed_line(
                     outline,
-                    Stroke::new(2.0, Color32::from_rgb(20, 90, 200)),
+                    Stroke::new(2.0, pal.external),
                 ));
             }
         }
@@ -479,13 +490,13 @@ pub fn modified_line(model: &Model, n: &Node) -> Option<String> {
 fn age_legend(painter: &egui::Painter, rect: Rect, palette: &Palette) {
     const WIDTH: f32 = 220.0;
     const BAR: f32 = 10.0;
-    let text = Color32::from_gray(80);
+    let text = palette.legend_text;
     let small = FontId::proportional(11.0);
     let backing = Rect::from_min_size(
         pos2(rect.left() + 8.0, rect.bottom() - 58.0),
         vec2(WIDTH + 24.0, 50.0),
     );
-    painter.rect_filled(backing, 4.0, Color32::from_white_alpha(215));
+    painter.rect_filled(backing, 4.0, palette.legend_backing);
     let left = backing.left() + 12.0;
     painter.text(
         pos2(left, backing.top() + 5.0),
@@ -499,7 +510,7 @@ fn age_legend(painter: &egui::Painter, rect: Rect, palette: &Palette) {
     const STEPS: u32 = 48;
     for i in 0..=STEPS {
         let t = i as f32 / STEPS as f32;
-        let color = palette.age_color(t, palette.sat_dir);
+        let color = palette.age_color(t, palette.sat_dir, palette.val_even);
         let x = bar.left() + WIDTH * t;
         mesh.colored_vertex(pos2(x, bar.top()), color);
         mesh.colored_vertex(pos2(x, bar.bottom()), color);

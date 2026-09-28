@@ -21,8 +21,17 @@ pub fn app_icon(ctx: &egui::Context, points: f32, cache: &mut Option<TextureHand
     cache.clone().expect("set above")
 }
 
-/// Colour of destructive actions.
+/// Colour of destructive actions: the fill of their buttons.
 pub const DANGER: Color32 = Color32::from_rgb(200, 40, 40);
+
+/// Text colour of a destructive action, readable on either theme.
+pub fn danger_text(ui: &Ui) -> Color32 {
+    if ui.visuals().dark_mode {
+        Color32::from_rgb(240, 110, 110)
+    } else {
+        DANGER
+    }
+}
 
 /// What an item's context menu asks for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,7 +58,7 @@ pub fn item_menu(ui: &mut Ui, id: u32) -> Option<ItemCommand> {
         command = Some(ItemCommand::CopyPath(id));
     }
     ui.separator();
-    let delete = Button::new(RichText::new("Delete…").color(DANGER));
+    let delete = Button::new(RichText::new("Delete…").color(danger_text(ui)));
     if ui
         .add_enabled(id != 0, delete)
         .on_hover_text("Move to the Recycle Bin")

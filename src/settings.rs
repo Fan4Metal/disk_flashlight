@@ -8,6 +8,7 @@ use crate::ui::SideView;
 use crate::ui::files::ListSort;
 
 const METRIC: &str = "metric";
+const THEME: &str = "theme";
 const COLOR_MODE: &str = "color_mode";
 const FOLLOW_IN_TREE: &str = "follow_in_tree";
 const LAST_PATH: &str = "last_path";
@@ -20,6 +21,8 @@ const FILES_OLDER_THAN: &str = "files_older_than";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
+    /// Light, dark or as in Windows.
+    pub theme: egui::ThemePreference,
     pub metric: Metric,
     pub color_mode: ColorMode,
     pub follow_in_tree: bool,
@@ -42,6 +45,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            theme: egui::ThemePreference::System,
             metric: Metric::Physical,
             color_mode: ColorMode::default(),
             follow_in_tree: true,
@@ -62,6 +66,12 @@ impl Settings {
         let d = Self::default();
         let get = |key| storage.get_string(key);
         Self {
+            theme: match get(THEME).as_deref() {
+                Some("system") => egui::ThemePreference::System,
+                Some("light") => egui::ThemePreference::Light,
+                Some("dark") => egui::ThemePreference::Dark,
+                _ => d.theme,
+            },
             metric: match get(METRIC).as_deref() {
                 Some("physical") => Metric::Physical,
                 Some("logical") => Metric::Logical,
@@ -116,6 +126,12 @@ impl Settings {
             ColorMode::Age => "age",
         };
         storage.set_string(METRIC, metric.into());
+        let theme = match self.theme {
+            egui::ThemePreference::System => "system",
+            egui::ThemePreference::Light => "light",
+            egui::ThemePreference::Dark => "dark",
+        };
+        storage.set_string(THEME, theme.into());
         storage.set_string(COLOR_MODE, color_mode.into());
         let side_view = match self.side_view {
             SideView::Folders => "folders",
@@ -180,6 +196,7 @@ mod tests {
     #[test]
     fn round_trip() {
         let s = Settings {
+            theme: egui::ThemePreference::Dark,
             metric: Metric::Logical,
             color_mode: ColorMode::Age,
             follow_in_tree: false,
