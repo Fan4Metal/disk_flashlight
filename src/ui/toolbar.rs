@@ -217,6 +217,7 @@ impl App {
                 ));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                self.errors.link(ui);
                 ui.weak(&self.status);
             });
         });

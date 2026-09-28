@@ -1,5 +1,6 @@
 pub mod about;
 pub mod chart;
+pub mod errors;
 pub mod files;
 pub mod search;
 pub mod toolbar;

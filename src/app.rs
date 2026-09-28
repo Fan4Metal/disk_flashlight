@@ -15,6 +15,7 @@ use crate::settings::Settings;
 use crate::ui::about::AboutDialog;
 use crate::ui::{DANGER, ItemCommand, SideView};
 use crate::ui::chart::{ChartAction, ChartView};
+use crate::ui::errors::ErrorsView;
 use crate::ui::files::FilesView;
 use crate::ui::search::SearchView;
 use crate::ui::tree::TreeView;
@@ -38,6 +39,8 @@ pub struct App {
     pub side: SideView,
     pub tree_hovered: Option<u32>,
     pub about: AboutDialog,
+    /// Folders the last scan could not read.
+    pub errors: ErrorsView,
     pub status: String,
     /// Process has administrator rights (enables the MFT scanner).
     pub elevated: bool,
@@ -100,6 +103,7 @@ impl App {
             side: settings.side_view,
             tree_hovered: None,
             about: AboutDialog::default(),
+            errors: ErrorsView::default(),
             status: "Ready".into(),
             elevated: scan::win::is_elevated(),
             disk: None,
@@ -159,16 +163,13 @@ impl App {
                     Method::Mft => "MFT",
                     Method::Walk => "directory walk",
                 };
+                // Errors are shown by a link next to the status.
                 self.status = format!(
-                    "Scanned {} files / {} dirs in {secs:.1}s via {method}{}",
+                    "Scanned {} files / {} dirs in {secs:.1}s via {method}",
                     crate::format::thousands(root.files as u64),
                     crate::format::thousands(root.dirs as u64),
-                    if errors > 0 {
-                        format!(", {errors} access errors")
-                    } else {
-                        String::new()
-                    }
                 );
+                self.errors.set(errors, h.progress.take_failed());
                 if let Some(reason) = info.fallback_reason {
                     log::info!("MFT fallback: {reason}");
                 }
@@ -448,6 +449,7 @@ impl eframe::App for App {
             self.handle_keys(&ctx);
         }
         self.about.show(&ctx);
+        self.errors.show(&ctx, self.elevated);
 
         egui::Panel::top("toolbar").show(root_ui, |ui| {
             ui.add_space(2.0);

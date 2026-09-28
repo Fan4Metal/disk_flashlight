@@ -5,6 +5,7 @@
 //! Subdirectories are processed through rayon's work-stealing pool.
 
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
 
 use rayon::prelude::*;
@@ -14,12 +15,25 @@ use crate::model::{Model, RawDir, RawFile};
 const FILE_ATTRIBUTE_COMPRESSED: u32 = 0x800;
 const FILE_ATTRIBUTE_SPARSE_FILE: u32 = 0x200;
 
+/// A folder the walk could not list.
+#[derive(Clone, Debug)]
+pub struct ScanError {
+    pub path: String,
+    /// The system's message, e.g. "Access is denied. (os error 5)".
+    pub message: String,
+}
+
+/// At most this many unreadable folders are kept; all are counted.
+pub const MAX_KEPT_ERRORS: usize = 1000;
+
 #[derive(Default)]
 pub struct Progress {
     pub files: AtomicU64,
     pub dirs: AtomicU64,
     pub bytes: AtomicU64,
     pub errors: AtomicU64,
+    /// The first `MAX_KEPT_ERRORS` unreadable folders, in no order.
+    pub failed: Mutex<Vec<ScanError>>,
     pub cancel: AtomicBool,
 }
 
@@ -30,6 +44,12 @@ impl Progress {
         self.dirs.store(0, Relaxed);
         self.bytes.store(0, Relaxed);
         self.errors.store(0, Relaxed);
+        self.failed.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    }
+
+    /// The unreadable folders kept so far, leaving none.
+    pub fn take_failed(&self) -> Vec<ScanError> {
+        std::mem::take(&mut *self.failed.lock().unwrap_or_else(|e| e.into_inner()))
     }
 
     pub fn snapshot(&self) -> (u64, u64, u64, u64) {
@@ -81,7 +101,16 @@ fn scan_dir(path: &Path, name: String, cluster: u64, progress: &Progress) -> Raw
     let mut entries = Vec::new();
     // An unreadable directory counts as one error; entries listed before a
     // failure are kept.
-    let errors = u64::from(super::win::list_dir(path, &mut entries).is_err());
+    if let Err(e) = super::win::list_dir(path, &mut entries) {
+        progress.errors.fetch_add(1, Relaxed);
+        let mut failed = progress.failed.lock().unwrap_or_else(|e| e.into_inner());
+        if failed.len() < MAX_KEPT_ERRORS {
+            failed.push(ScanError {
+                path: path.to_string_lossy().into_owned(),
+                message: e.to_string(),
+            });
+        }
+    }
 
     let mut subdirs: Vec<(PathBuf, String)> = Vec::new();
     let mut bytes = 0u64;
@@ -112,9 +141,6 @@ fn scan_dir(path: &Path, name: String, cluster: u64, progress: &Progress) -> Raw
     progress.files.fetch_add(dir.files.len() as u64, Relaxed);
     progress.dirs.fetch_add(1, Relaxed);
     progress.bytes.fetch_add(bytes, Relaxed);
-    if errors > 0 {
-        progress.errors.fetch_add(errors, Relaxed);
-    }
 
     if subdirs.is_empty() {
         return dir;
