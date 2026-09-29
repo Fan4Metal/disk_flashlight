@@ -10,11 +10,11 @@ use crate::ui::{ItemCommand, item_menu};
 
 const ROW_HEIGHT: f32 = 20.0;
 const INDENT: f32 = 14.0;
-const ARROW_WIDTH: f32 = 16.0;
+pub(super) const ARROW_WIDTH: f32 = 16.0;
 
 /// Expand/collapse triangle painted directly (the default fonts lack the
 /// ▲/▼ glyphs), returning the click response.
-fn arrow(ui: &mut Ui, expanded: bool) -> egui::Response {
+pub(super) fn arrow(ui: &mut Ui, expanded: bool) -> egui::Response {
     let (rect, resp) =
         ui.allocate_exact_size(egui::vec2(ARROW_WIDTH, ROW_HEIGHT), egui::Sense::click());
     let c = rect.center();

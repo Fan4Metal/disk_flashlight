@@ -365,6 +365,17 @@ impl Model {
     /// is deterministic but otherwise unspecified.
     pub fn largest_files(&self, root: u32, metric: Metric, limit: usize, before: Option<u32>) -> Vec<u32> {
         let old_enough = |t: u32| before.is_none_or(|b| t != 0 && t < b);
+        self.largest_files_where(root, metric, limit, |_, n| old_enough(n.modified))
+    }
+
+    /// [`Self::largest_files`] among the files `keep(id, node)` accepts.
+    pub fn largest_files_where(
+        &self,
+        root: u32,
+        metric: Metric,
+        limit: usize,
+        keep: impl Fn(u32, &Node) -> bool,
+    ) -> Vec<u32> {
         let mut best = TopN::new(limit);
         let mut stack = vec![root];
         while let Some(dir) = stack.pop() {
@@ -376,7 +387,7 @@ impl Model {
                 }
                 if n.is_dir {
                     stack.push(c);
-                } else if old_enough(n.modified) {
+                } else if keep(c, n) {
                     best.push(m, c);
                 }
             }

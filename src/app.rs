@@ -771,9 +771,9 @@ impl eframe::App for App {
                     SideView::LargestFiles => self.files.show(ui, &model, root, metric, hovered),
                     SideView::Search => self.search.show(ui, &model, metric, hovered),
                     SideView::Types => {
-                        let a = self.types.show(ui, &model, root, metric, &self.chart.palette);
+                        let a = self.types.show(ui, &model, root, metric, &self.chart.palette, hovered);
                         search_for = a.search;
-                        crate::ui::tree::TreeAction::default()
+                        a.tree
                     }
                 });
             });

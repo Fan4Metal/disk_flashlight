@@ -256,6 +256,21 @@ mod tests {
     }
 
     #[test]
+    fn largest_files_of_one_type() {
+        let m = model();
+        let txt = m.types.stats(&m, 0, Metric::Logical)[1].ty;
+        let top = |root, limit| -> Vec<&str> {
+            m.largest_files_where(root, Metric::Logical, limit, |id, _| m.types.of(id) == txt)
+                .into_iter()
+                .map(|id| m.name(id))
+                .collect()
+        };
+        assert_eq!(top(0, 10), ["b.txt", "g.txt", "e.Txt", "d.TXT"]);
+        assert_eq!(top(0, 2), ["b.txt", "g.txt"]);
+        assert_eq!(top(m.find_dir(&["sub"]), 10), ["g.txt", "e.Txt", "d.TXT"]);
+    }
+
+    #[test]
     fn hits_add_up_to_the_folders() {
         let m = model();
         let t = &m.types;
