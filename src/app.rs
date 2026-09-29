@@ -411,6 +411,11 @@ impl App {
             // A rescan may have replaced the model while the dialog was open.
             if self.model.as_ref().is_some_and(|m| Arc::ptr_eq(m, &model)) {
                 self.start_delete(model, id, ctx);
+            } else {
+                self.status = tr!(
+                    format!("{} was not deleted: the results changed meanwhile; choose it again", model.path(id)),
+                    format!("{} не удалено: результаты за это время обновились; выберите заново", model.path(id))
+                );
             }
         }
     }
