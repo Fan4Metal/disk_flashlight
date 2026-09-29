@@ -436,7 +436,9 @@ pub fn build_mesh(model: &Model, layout: &Layout, palette: &Palette, hits: Optio
         .sum();
     mesh.vertices.reserve(approx_vertices);
     mesh.indices.reserve(approx_vertices * 3);
-    let n_rings = layout.rings.iter().filter(|r| !r.is_empty()).count();
+    // The rings of the whole chart, not just the visible ones, so that a
+    // sector keeps its colour while the view is zoomed or panned.
+    let n_rings = layout.rings_used;
     for (ring, sectors) in layout.rings.iter().enumerate() {
         for (i, s) in sectors.iter().enumerate() {
             let (r_in, r_out) = layout.sector_radii(ring, s);

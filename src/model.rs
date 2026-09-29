@@ -141,6 +141,9 @@ pub struct Model {
     pub scanned_at: u32,
     /// Type (extension) of every file, built with the model.
     pub types: crate::types::FileTypes,
+    /// Per node: how many levels of items lie under it (0 for a file or an
+    /// empty folder, 1 for a folder of files only), capped at 255.
+    heights: Vec<u8>,
 }
 
 impl Model {
@@ -156,11 +159,30 @@ impl Model {
             cluster_size,
             scanned_at: unix_now(),
             types: Default::default(),
+            heights: Vec::new(),
         };
         m.push_dir(&root, NO_NODE);
         m.pack_children(&root, 0);
         m.types = crate::types::FileTypes::build(&m);
+        m.heights = m.compute_heights();
         m
+    }
+
+    /// Heights of all nodes: a parent is packed before its children, so
+    /// going from the last node back finishes every node before its parent.
+    fn compute_heights(&self) -> Vec<u8> {
+        let mut h = vec![0u8; self.nodes.len()];
+        for id in (1..self.nodes.len()).rev() {
+            let p = self.nodes[id].parent as usize;
+            h[p] = h[p].max(h[id].saturating_add(1));
+        }
+        h
+    }
+
+    /// Levels of items under `id`: the number of rings its chart needs.
+    #[inline]
+    pub fn height(&self, id: u32) -> usize {
+        self.heights.get(id as usize).copied().unwrap_or(0) as usize
     }
 
     fn push_dir(&mut self, d: &RawDir, parent: u32) -> u32 {
@@ -853,6 +875,30 @@ mod tests {
         assert_eq!(m2.node(m2.find_dir(&["fresh"])).modified, 200);
         assert_eq!(m2.node(0).modified, 250);
         assert_eq!(m2.scanned_at, m.scanned_at);
+    }
+
+    #[test]
+    fn heights_count_levels_below() {
+        let raw = RawDir {
+            name: "root".into(),
+            files: vec![file("f", 1)],
+            subdirs: vec![
+                RawDir {
+                    name: "a".into(),
+                    subdirs: vec![RawDir { name: "b".into(), files: vec![file("g", 1)], ..Default::default() }],
+                    ..Default::default()
+                },
+                RawDir { name: "empty".into(), ..Default::default() },
+            ],
+            ..Default::default()
+        };
+        let m = Model::from_raw(raw, "X:\\".into(), 1);
+        assert_eq!(m.height(0), 3);
+        assert_eq!(m.height(m.find_dir(&["a"])), 2);
+        assert_eq!(m.height(m.find_dir(&["a", "b"])), 1);
+        assert_eq!(m.height(m.find_dir(&["empty"])), 0);
+        let f = m.children(0).find(|&c| !m.node(c).is_dir).unwrap();
+        assert_eq!(m.height(f), 0);
     }
 
     #[test]

@@ -204,6 +204,10 @@ pub fn polar_angle(d: egui::Vec2) -> f32 {
 #[derive(Debug)]
 pub struct Layout {
     pub metric: Metric,
+    /// Rings the whole chart of the root fills, visible or not: at most
+    /// `radii.len()`. Colours fade over these, so they stay put while the
+    /// view is zoomed or panned.
+    pub rings_used: usize,
     pub center: Pos2,
     pub outer_radius: f32,
     /// `(inner, outer)` radius per ring; ring 0 = children of root.
@@ -318,6 +322,7 @@ pub fn build_with_free(
 
     let mut layout = Layout {
         metric,
+        rings_used: model.height(root).clamp(1, depth),
         center,
         outer_radius,
         radii,
