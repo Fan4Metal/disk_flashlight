@@ -221,7 +221,12 @@ impl App {
                 .selected_text(tr!(format!("Rings: {rings}"), format!("Колец: {rings}")))
                 .show_ui(ui, |ui| {
                     for n in layout::MIN_RINGS..=layout::MAX_RINGS {
-                        ui.selectable_value(&mut rings, n, n.to_string());
+                        let text = if n == layout::DEFAULT_RINGS {
+                            tr!(format!("{n} (default)"), format!("{n} (по умолчанию)"))
+                        } else {
+                            n.to_string()
+                        };
+                        ui.selectable_value(&mut rings, n, text);
                     }
                 })
                 .response
