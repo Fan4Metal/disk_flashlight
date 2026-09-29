@@ -10,6 +10,8 @@ const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
 const LICENSE: &str = env!("CARGO_PKG_LICENSE");
 /// Displayed icon size in points.
 const ICON_SIZE: f32 = 64.0;
+/// Width of the language list, enough for its longest entry.
+const LANG_WIDTH: f32 = 220.0;
 
 #[derive(Default)]
 pub struct AboutDialog {
@@ -61,21 +63,29 @@ impl AboutDialog {
                     .on_hover_text(REPOSITORY);
                 ui.weak(tr!(format!("{LICENSE} License"), format!("Лицензия {LICENSE}")));
                 ui.add_space(10.0);
+                ui.separator();
+                ui.add_space(6.0);
+                // Label over the list, both centred like the rest; a fixed
+                // width keeps the list from jumping when the language changes.
+                ui.weak(tr!("Interface language", "Язык интерфейса"));
+                let mut choice = self.lang;
+                // A combo box lays itself out left to right, ignoring the
+                // centring: indent it by hand (`width` is its outer width).
                 ui.horizontal(|ui| {
-                    ui.label(tr!("Language", "Язык"));
-                    let mut choice = self.lang;
+                    ui.add_space(((ui.available_width() - LANG_WIDTH) / 2.0).max(0.0));
                     egui::ComboBox::from_id_salt("language")
                         .selected_text(lang_label(choice))
+                        .width(LANG_WIDTH)
                         .show_ui(ui, |ui| {
                             for c in [LangChoice::System, LangChoice::En, LangChoice::Ru] {
                                 ui.selectable_value(&mut choice, c, lang_label(c));
                             }
                         });
-                    if choice != self.lang {
-                        self.lang = choice;
-                        set_lang(choice.resolve());
-                    }
                 });
+                if choice != self.lang {
+                    self.lang = choice;
+                    set_lang(choice.resolve());
+                }
                 ui.add_space(8.0);
             });
             close_button(ui)
