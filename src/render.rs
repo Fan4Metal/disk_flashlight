@@ -27,6 +27,9 @@ pub enum ColorMode {
     /// Hue from the last write time (red = just now, blue = ten years or
     /// more), on a logarithmic scale; folders by the newest item inside.
     Age,
+    /// Files by type: the largest types of the scan get a colour each, the
+    /// rest one neutral colour; folders are grey.
+    Type,
 }
 
 /// Colours are built with egui's `Hsva`, which works in linear RGB; the
@@ -92,6 +95,15 @@ pub struct Palette {
     /// Legend of the age mode: text and the backing behind it.
     pub legend_text: Color32,
     pub legend_backing: Color32,
+    // --- Type mode ---
+    /// Hue (degrees) and brightness factor of each colour slot, neighbours
+    /// far apart so that the largest types, which sit next to each other in
+    /// the legend and often on the chart, never look alike. Twelve pastel
+    /// hues alone are too close, so the last slots are darker shades.
+    pub type_hues: [(f32, f32); crate::types::COLOURED],
+    /// Folders, and files of a type without a colour of its own.
+    pub type_folder: Color32,
+    pub type_other: Color32,
 }
 
 impl Default for Palette {
@@ -132,6 +144,9 @@ impl Palette {
             external: Color32::from_rgb(110, 175, 255),
             legend_text: Color32::from_gray(205),
             legend_backing: Color32::from_black_alpha(200),
+            // Darker than the centre disc, which would merge with them.
+            type_folder: Color32::from_gray(46),
+            type_other: Color32::from_rgb(98, 93, 86),
             ..light
         }
     }
@@ -168,6 +183,34 @@ impl Palette {
             external: Color32::from_rgb(20, 90, 200),
             legend_text: Color32::from_gray(80),
             legend_backing: Color32::from_white_alpha(215),
+            type_hues: [
+                (215.0, 1.0),
+                (25.0, 1.0),
+                (130.0, 1.0),
+                (290.0, 1.0),
+                (55.0, 1.0),
+                (185.0, 1.0),
+                (335.0, 1.0),
+                (95.0, 1.0),
+                (0.0, 0.62),
+                (250.0, 0.62),
+                (160.0, 0.5),
+                (30.0, 0.42),
+            ],
+            type_folder: Color32::from_gray(212),
+            type_other: Color32::from_rgb(238, 233, 224),
+        }
+    }
+
+    /// Colour of a file whose type has colour slot `rank` (see
+    /// [`crate::types::FileTypes::rank`]) in `ring` of `n_rings`.
+    pub fn type_color(&self, rank: u8, ring: usize, n_rings: usize) -> Color32 {
+        match self.type_hues.get(rank as usize) {
+            Some(&(hue, dim)) => {
+                let (sat, val) = self.faded(self.sat_dir, self.val_even * dim, 0.5, ring, n_rings);
+                Color32::from(Hsva::new(hue / 360.0, sat, val, 1.0))
+            }
+            None => self.type_other,
         }
     }
 
@@ -221,6 +264,14 @@ impl Palette {
     ) -> Color32 {
         let sat = if is_dir { self.sat_dir } else { self.sat_file };
         match self.mode {
+            // The type is not known here; `type_color` gives files theirs.
+            ColorMode::Type => {
+                if is_dir {
+                    self.type_folder
+                } else {
+                    self.type_other
+                }
+            }
             ColorMode::Age => match age {
                 // Half the fade of the size mode: the hue carries the
                 // meaning here, and faded hues are harder to tell apart.
@@ -256,8 +307,8 @@ impl Palette {
         let (hue, sat) = match self.mode {
             ColorMode::Size => (self.hue_smallest, self.sat_group),
             ColorMode::Depth => (self.hues[ring.min(self.hues.len() - 1)], self.sat_group),
-            // A near grey: any hue would read as an age.
-            ColorMode::Age => (40.0, 0.08),
+            // A near grey: any hue would read as an age or a type.
+            ColorMode::Age | ColorMode::Type => (40.0, 0.08),
         };
         let (sat, val) = self.faded(sat, self.val_group, 1.0, ring, n_rings);
         Color32::from(Hsva::new(hue / 360.0, sat, val, 1.0))
@@ -378,6 +429,14 @@ pub fn build_mesh(model: &Model, layout: &Layout, palette: &Palette, hits: Optio
                 palette.color(ring, i, n_rings, 0.0, None, false)
             } else if s.is_group() {
                 palette.group_color(ring, n_rings)
+            } else if palette.mode == ColorMode::Type {
+                let n = model.node(s.node);
+                if n.is_dir {
+                    palette.type_folder
+                } else {
+                    let rank = model.types.rank(model.types.of(s.node));
+                    palette.type_color(rank, ring, n_rings)
+                }
             } else {
                 let n = model.node(s.node);
                 let age = if palette.mode == ColorMode::Age {
@@ -554,5 +613,27 @@ mod tests {
         assert!(lum(outer) > lum(inner));
         // Search: non-matches sink into the background.
         assert!(lum(dark.dimmed) < lum(dark.color(2, 0, 4, 0.1, None, false)));
+    }
+
+    #[test]
+    fn type_colours_are_distinct_and_the_rest_neutral() {
+        for dark in [false, true] {
+            let p = Palette {
+                mode: ColorMode::Type,
+                ..Palette::for_theme(dark)
+            };
+            let colours: Vec<Color32> = (0..crate::types::COLOURED as u8).map(|r| p.type_color(r, 0, 4)).collect();
+            for (i, a) in colours.iter().enumerate() {
+                for b in &colours[i + 1..] {
+                    let d = (a.r() as i32 - b.r() as i32).abs()
+                        + (a.g() as i32 - b.g() as i32).abs()
+                        + (a.b() as i32 - b.b() as i32).abs();
+                    assert!(d > 30, "dark {dark}: {a:?} and {b:?} look alike");
+                }
+            }
+            assert_eq!(p.type_color(crate::types::OTHER, 0, 4), p.type_other);
+            assert_eq!(p.color(0, 0, 4, 1.0, None, true), p.type_folder);
+            assert_ne!(p.type_folder, p.type_other);
+        }
     }
 }

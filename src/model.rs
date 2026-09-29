@@ -139,6 +139,8 @@ pub struct Model {
     /// When the scan finished (Unix seconds): ages are counted from here,
     /// so that they do not drift while the results are looked at.
     pub scanned_at: u32,
+    /// Type (extension) of every file, built with the model.
+    pub types: crate::types::FileTypes,
 }
 
 impl Model {
@@ -153,9 +155,11 @@ impl Model {
             root_path,
             cluster_size,
             scanned_at: unix_now(),
+            types: Default::default(),
         };
         m.push_dir(&root, NO_NODE);
         m.pack_children(&root, 0);
+        m.types = crate::types::FileTypes::build(&m);
         m
     }
 

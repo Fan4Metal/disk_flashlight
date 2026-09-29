@@ -236,8 +236,10 @@ impl ChartView {
             pal.center_subtext,
         );
 
-        if self.palette.mode == ColorMode::Age {
-            age_legend(&painter, rect, &self.palette);
+        match self.palette.mode {
+            ColorMode::Age => age_legend(&painter, rect, &self.palette),
+            ColorMode::Type => type_legend(&painter, rect, &self.palette, model),
+            _ => {}
         }
 
         // "Reset view" button in the corner, while zoomed or panned; the
@@ -504,6 +506,49 @@ pub fn modified_line(model: &Model, n: &Node) -> Option<String> {
         let age = ago(model.scanned_at.saturating_sub(n.modified));
         format!("{label}: {} ({age})", date(n.modified))
     })
+}
+
+/// Colours of the type mode in the bottom left corner of the chart `rect`:
+/// the coloured types in two columns, then the colour of all the others.
+fn type_legend(painter: &egui::Painter, rect: Rect, palette: &Palette, model: &Model) {
+    const COLUMN: f32 = 96.0;
+    const ROW: f32 = 17.0;
+    let mut entries: Vec<(egui::Color32, String)> = model
+        .types
+        .coloured()
+        .into_iter()
+        .map(|ty| {
+            let name = match ty {
+                crate::types::NO_EXTENSION => tr!("no ext.", "без расш.").to_string(),
+                ty => format!(".{}", model.types.name(ty)),
+            };
+            (palette.type_color(model.types.rank(ty), 0, 1), name)
+        })
+        .collect();
+    entries.push((palette.type_other, tr!("other", "прочие").to_string()));
+    let rows = entries.len().div_ceil(2);
+    let text = palette.legend_text;
+    let backing = Rect::from_min_size(
+        pos2(rect.left() + 8.0, rect.bottom() - 8.0 - (30.0 + rows as f32 * ROW)),
+        vec2(2.0 * COLUMN + 20.0, 30.0 + rows as f32 * ROW),
+    );
+    painter.rect_filled(backing, 4.0, palette.legend_backing);
+    painter.text(
+        pos2(backing.left() + 12.0, backing.top() + 5.0),
+        Align2::LEFT_TOP,
+        tr!("File types", "Типы файлов"),
+        FontId::proportional(12.0),
+        text,
+    );
+    let small = FontId::proportional(11.0);
+    for (i, (colour, name)) in entries.into_iter().enumerate() {
+        let (col, row) = (i / rows, i % rows);
+        let x = backing.left() + 12.0 + col as f32 * COLUMN;
+        let y = backing.top() + 24.0 + row as f32 * ROW;
+        let swatch = Rect::from_min_size(pos2(x, y + 3.0), vec2(10.0, 10.0));
+        painter.rect_filled(swatch, 2.0, colour);
+        painter.text(pos2(x + 15.0, y + 8.0), Align2::LEFT_CENTER, name, small.clone(), text);
+    }
 }
 
 /// Colour scale of the age mode in the bottom left corner of the chart

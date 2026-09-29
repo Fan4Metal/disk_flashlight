@@ -133,7 +133,7 @@ impl SearchView {
         if stale {
             let found = model.search(0, self.query.trim(), metric, LIMIT, self.whole_word, self.kind);
             (self.count, self.total, self.hits) = (found.count, found.total, found.hits);
-            self.generation += 1;
+            self.generation = crate::ui::next_generation();
             let query = self.query.trim();
             self.rows = found
                 .ids

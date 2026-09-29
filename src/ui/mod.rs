@@ -6,6 +6,7 @@ pub mod path_field;
 pub mod search;
 pub mod toolbar;
 pub mod tree;
+pub mod types;
 
 use egui::{Button, Color32, RichText, TextureHandle, TextureOptions, Ui};
 
@@ -19,6 +20,14 @@ pub fn app_icon(ctx: &egui::Context, points: f32, cache: &mut Option<TextureHand
         *cache = Some(ctx.load_texture(format!("app_icon_{px}"), image, TextureOptions::LINEAR));
     }
     cache.clone().expect("set above")
+}
+
+/// A new generation for highlights on the chart (search matches, a file
+/// type): the chart rebuilds its mesh when the number changes, so every
+/// list that colours the chart takes its numbers from this one counter.
+pub fn next_generation() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Colour of destructive actions: the fill of their buttons.
@@ -82,4 +91,5 @@ pub enum SideView {
     Folders,
     LargestFiles,
     Search,
+    Types,
 }

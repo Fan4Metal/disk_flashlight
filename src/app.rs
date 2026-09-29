@@ -19,6 +19,7 @@ use crate::ui::errors::ErrorsView;
 use crate::ui::path_field::PathField;
 use crate::ui::files::FilesView;
 use crate::ui::search::SearchView;
+use crate::ui::types::TypesView;
 use crate::ui::tree::TreeView;
 
 pub struct App {
@@ -39,6 +40,7 @@ pub struct App {
     pub tree: TreeView,
     pub files: FilesView,
     pub search: SearchView,
+    pub types: TypesView,
     pub side: SideView,
     pub tree_hovered: Option<u32>,
     pub about: AboutDialog,
@@ -134,6 +136,7 @@ impl App {
             tree: TreeView::default(),
             files: FilesView::default(),
             search: SearchView::default(),
+            types: TypesView::default(),
             side: settings.side_view,
             tree_hovered: None,
             about: AboutDialog::default(),
@@ -226,6 +229,7 @@ impl App {
         self.tree.reset();
         self.files.reset();
         self.search.reset();
+        self.types.reset();
         self.chart.invalidate();
         self.tree_hovered = None;
         self.disk = None;
@@ -314,6 +318,7 @@ impl App {
         self.tree.reset();
         self.files.reset();
         self.search.reset();
+        self.types.reset();
         self.tree.reveal(&model, self.nav.root);
         self.tree_hovered = None;
         let root = std::path::Path::new(&model.root_path);
@@ -728,6 +733,7 @@ impl eframe::App for App {
         };
 
         let mut tree_action = None;
+        let mut search_for = None;
         egui::Panel::left("tree")
             .resizable(true)
             .default_size(300.0)
@@ -749,6 +755,11 @@ impl eframe::App for App {
                             "Find files and folders by name (Ctrl+F)",
                             "Поиск файлов и папок по имени (Ctrl+F)"
                         ));
+                    ui.selectable_value(&mut self.side, SideView::Types, tr!("Types", "Типы"))
+                        .on_hover_text(tr!(
+                            "File types under the centre of the chart",
+                            "Типы файлов в центре диаграммы"
+                        ));
                 });
                 ui.separator();
                 let (root, metric, hovered) = (self.nav.root, self.metric, self.chart.hovered);
@@ -759,8 +770,18 @@ impl eframe::App for App {
                     }
                     SideView::LargestFiles => self.files.show(ui, &model, root, metric, hovered),
                     SideView::Search => self.search.show(ui, &model, metric, hovered),
+                    SideView::Types => {
+                        let a = self.types.show(ui, &model, root, metric, &self.chart.palette);
+                        search_for = a.search;
+                        crate::ui::tree::TreeAction::default()
+                    }
                 });
             });
+        // A double click on a type lists its files in the Search tab.
+        if let Some(query) = search_for {
+            self.search.query = query;
+            self.side = SideView::Search;
+        }
         if let Some(a) = tree_action {
             self.tree_hovered = a.hovered;
             if let Some(id) = a.selected {
@@ -782,7 +803,11 @@ impl eframe::App for App {
                     self.metric,
                     self.tree_hovered,
                     self.disk.filter(|_| self.nav.root == 0),
-                    self.search.highlight().filter(|_| self.side == SideView::Search),
+                    match self.side {
+                        SideView::Search => self.search.highlight(),
+                        SideView::Types => self.types.highlight(),
+                        _ => None,
+                    },
                 );
         });
         match chart_action {

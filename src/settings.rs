@@ -96,6 +96,7 @@ impl Settings {
                 Some("size") => ColorMode::Size,
                 Some("depth") => ColorMode::Depth,
                 Some("age") => ColorMode::Age,
+                Some("type") => ColorMode::Type,
                 _ => d.color_mode,
             },
             follow_in_tree: match get(FOLLOW_IN_TREE).as_deref() {
@@ -107,6 +108,7 @@ impl Settings {
                 Some("folders") => SideView::Folders,
                 Some("largest_files") => SideView::LargestFiles,
                 Some("search") => SideView::Search,
+                Some("types") => SideView::Types,
                 _ => d.side_view,
             },
             search_whole_word: match get(SEARCH_WHOLE_WORD).as_deref() {
@@ -149,6 +151,7 @@ impl Settings {
             ColorMode::Size => "size",
             ColorMode::Depth => "depth",
             ColorMode::Age => "age",
+            ColorMode::Type => "type",
         };
         storage.set_string(METRIC, metric.into());
         let theme = match self.theme {
@@ -168,6 +171,7 @@ impl Settings {
             SideView::Folders => "folders",
             SideView::LargestFiles => "largest_files",
             SideView::Search => "search",
+            SideView::Types => "types",
         };
         storage.set_string(FOLLOW_IN_TREE, self.follow_in_tree.to_string());
         storage.set_string(SIDE_VIEW, side_view.into());

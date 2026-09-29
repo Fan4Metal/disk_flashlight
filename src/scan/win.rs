@@ -182,6 +182,32 @@ pub fn refresh_caption(hwnd: isize) {
     }
 }
 
+/// Windows' name for files with extension `ext` (without the dot), as the
+/// Type column of Explorer shows it: `MP4 Video`, `Текстовый документ`, in
+/// the language of Windows.
+pub fn type_description(ext: &str) -> Option<String> {
+    use windows_sys::Win32::UI::Shell::{ASSOCF_NOTRUNCATE, ASSOCSTR_FRIENDLYDOCNAME, AssocQueryStringW};
+    let assoc: Vec<u16> = format!(".{ext}").encode_utf16().chain(Some(0)).collect();
+    let mut buf = vec![0u16; 260];
+    let mut len = buf.len() as u32;
+    let hr = unsafe {
+        AssocQueryStringW(
+            ASSOCF_NOTRUNCATE,
+            ASSOCSTR_FRIENDLYDOCNAME,
+            assoc.as_ptr(),
+            std::ptr::null(),
+            buf.as_mut_ptr(),
+            &mut len,
+        )
+    };
+    if hr != 0 {
+        return None;
+    }
+    // The length counts the terminating zero.
+    let text = String::from_utf16_lossy(&buf[..(len as usize).saturating_sub(1).min(buf.len())]);
+    (!text.trim().is_empty()).then_some(text)
+}
+
 /// Whether Windows shows its interface in Russian (primary language of
 /// the user's UI language, `LANG_RUSSIAN`).
 pub fn ui_language_is_russian() -> bool {

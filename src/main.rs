@@ -11,6 +11,7 @@ mod model;
 mod render;
 mod scan;
 mod settings;
+mod types;
 mod ui;
 
 use std::path::PathBuf;
@@ -269,6 +270,31 @@ fn bench(path: PathBuf, allow_mft: bool) -> anyhow::Result<()> {
         t.elapsed().as_secs_f64() * 1e3,
         top.len()
     );
+
+    // File types: built with the model; the totals for the whole scan and
+    // the colouring of one type are what the Types tab does.
+    let t = Instant::now();
+    let rebuilt = types::FileTypes::build(&model);
+    let t_build = t.elapsed();
+    let t = Instant::now();
+    let stats = model.types.stats(&model, 0, model::Metric::Physical);
+    let t_stats = t.elapsed();
+    let t = Instant::now();
+    let hits = stats.first().map(|s| model.types.hits(&model, s.ty, model::Metric::Physical));
+    println!(
+        "types:     build {:.2}ms, totals {:.2}ms, colour one {:.2}ms  ({} types; {})",
+        t_build.as_secs_f64() * 1e3,
+        t_stats.as_secs_f64() * 1e3,
+        t.elapsed().as_secs_f64() * 1e3,
+        stats.len(),
+        rebuilt
+            .coloured()
+            .iter()
+            .map(|&ty| format!(".{}", rebuilt.name(ty)))
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+    drop(hits);
 
     // The model rebuilt without a deleted item (the largest file).
     if let Some(&victim) = top.first() {

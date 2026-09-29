@@ -208,7 +208,7 @@ const MARK_BG_DARK: egui::Color32 = egui::Color32::from_rgb(112, 86, 18);
 
 /// Weak `text` right-aligned in a cell `width` wide, so that the column
 /// lines up whatever the width of its values.
-fn cell(ui: &mut Ui, width: f32, text: String) {
+pub(super) fn cell(ui: &mut Ui, width: f32, text: String) {
     let (rect, _) = ui.allocate_exact_size(vec2(width, ROW_HEIGHT), Sense::hover());
     let font = egui::TextStyle::Body.resolve(ui.style());
     let color = ui.visuals().weak_text_color();

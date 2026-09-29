@@ -179,6 +179,7 @@ impl App {
                 ColorMode::Size => tr!("Colors: by size", "Цвета: по размеру"),
                 ColorMode::Depth => tr!("Colors: by level", "Цвета: по уровню"),
                 ColorMode::Age => tr!("Colors: by age", "Цвета: по возрасту"),
+                ColorMode::Type => tr!("Colors: by type", "Цвета: по типу"),
             };
             egui::ComboBox::from_id_salt("color_mode")
                 .selected_text(label(mode))
@@ -192,6 +193,13 @@ impl App {
                         .on_hover_text(tr!(
                             "Colour by ring: red in the centre towards yellow at the rim",
                             "Цвет по кольцу: от красного в центре к жёлтому по краю"
+                        ));
+                    ui.selectable_value(&mut mode, ColorMode::Type, label(ColorMode::Type))
+                        .on_hover_text(tr!(
+                            "Colour files by type: the largest types of the scan get a colour each, \
+                             the rest one neutral colour; folders are grey",
+                            "Цвет файлов по типу: самые объёмные типы скана получают свой цвет, \
+                             остальные — один нейтральный; папки серые"
                         ));
                     ui.selectable_value(&mut mode, ColorMode::Age, label(ColorMode::Age))
                         .on_hover_text(tr!(
