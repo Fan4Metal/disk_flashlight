@@ -197,8 +197,9 @@ impl App {
         // Another drive or folder: its old results go at once, and the
         // spinner shows until the new ones arrive. A rescan of the same
         // path keeps them, and then the current folder and the history.
-        // So does a network path, which could not be checked above: if
-        // the server does not answer, the results on screen stay.
+        // A network path, which could not be checked above, keeps them
+        // until the server answers (see `poll_scan`): if it does not, the
+        // results on screen stay.
         let path_str = path.to_string_lossy();
         if !remote && self.model.as_ref().is_some_and(|m| !same_path(&m.root_path, &path_str)) {
             self.clear_model();
@@ -271,6 +272,18 @@ impl App {
         match h.try_result() {
             None => {
                 ctx.request_repaint_after(Duration::from_millis(100));
+                // Results of another path kept while a network path is
+                // scanned go (and the spinner shows) once the server has
+                // answered with the first file or folder.
+                let (files, dirs, _, _) = h.progress.snapshot();
+                let answered = files + dirs > 0
+                    && self
+                        .model
+                        .as_ref()
+                        .is_some_and(|m| !same_path(&m.root_path, &h.path.to_string_lossy()));
+                if answered {
+                    self.clear_model();
+                }
             }
             Some(Ok((model, info))) => {
                 let secs = h.started.elapsed().as_secs_f32();
