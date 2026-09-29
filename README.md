@@ -27,7 +27,7 @@ The project is written in Rust and uses [egui](https://github.com/emilk/egui) wi
 - Three colour schemes selectable in the toolbar: **by size**, where the largest item among its siblings is red and smaller ones shift towards yellow, with colours becoming paler towards the rim (as in OverDisk); **by level**, where the colour depends on the ring; and **by age**, where the colour depends on the date of the last change, from red for items changed just before the scan through yellow and green to blue for items ten years old or older, on a logarithmic scale explained by a legend in the corner of the chart. A fourth scheme, **by type**, gives each of the twelve largest file types of the scan a colour of its own and all other files one neutral colour, with folders in grey; the colours do not change while moving through the folders, and a legend in the corner lists them.
 - English and Russian interface. The language follows that of Windows (Russian when Windows is shown in Russian, English otherwise) and can be chosen in the **About** window; sizes, dates and numbers follow the language (`4.6 GB` and `2024-03-15` in English, `4,6 ГБ` and `15.03.2024` in Russian). The command-line modes print in English.
 - Light and dark themes, switched by the button with a sun, a moon or a half-filled circle next to **About**: a click moves from following the Windows setting (the default) to the light theme, then to the dark one and back. The chart has a palette of its own for each theme; on the dark one the colours are deeper and fade towards the background further out.
-- Physical (cluster-rounded, compressed and sparse files taken into account) or logical size as the chart metric.
+- Physical (cluster-rounded, compressed and sparse files taken into account; small files that NTFS keeps inside their MFT record take no space) or logical size as the chart metric.
 - Status bar with directory and file counts, logical size, allocated size and slack for the current root.
 - Settings are kept between runs: the language, the theme, the chart metric, the colour scheme, the number of rings, the **Follow in tree** option, the tab shown in the left panel, the order of both lists and the age filter of the **Largest files** tab, the window size and position, the tree width, and the last scanned path, which is offered in the path field without being scanned; nothing is selected in the drive list at start-up, so a slow or network drive is not scanned unasked. They are stored in `%APPDATA%\Disk Flashlight\data\app.ron`. A copy becomes portable when a `disk_flashlight.ron` file (an empty one is enough) lies next to `disk_flashlight.exe`: the settings are then kept in that file, and nothing is written to the user profile. If the file cannot be written, for example on a read-only medium, the profile is used instead. The **About** window shows where the settings are kept.
 
@@ -76,7 +76,7 @@ Besides the drives, the drive list offers the eight folders scanned most recentl
 
 Setting the environment variable `RUST_LOG=disk_flashlight=debug` prints per-phase timings of the MFT scanner.
 
-The `--mft` option requests administrator rights only where they speed up the scan: for the root of an NTFS drive, or when no path is given. For a subdirectory or another file system, and when the UAC prompt is declined, the program starts normally and walks the directories.
+The `--mft` option requests administrator rights only where they speed up the scan: for a drive or folder on a local NTFS volume, or when no path is given. For another file system or a network path, and when the UAC prompt is declined, the program starts normally and walks the directories.
 
 The version is shown in the window title.
 
@@ -86,15 +86,17 @@ Keyboard shortcuts: `Backspace` goes up, `Alt+Left` and `Alt+Right` move through
 
 | Path | Purpose |
 |---|---|
-| `src/model.rs` | Arena tree packed in depth-first order with children sorted by size |
+| `src/model.rs` | Arena tree packed in depth-first order with children sorted by size; largest files and name search |
+| `src/types.rs` | File types (extensions): totals under a folder and colour slots |
 | `src/scan/mft.rs` | NTFS Master File Table reader and parser |
-| `src/scan/walk.rs` | Parallel directory walk (rayon over `read_dir`) |
-| `src/scan/win.rs` | Win32 helpers: drive enumeration, cluster size, compressed sizes |
+| `src/scan/walk.rs` | Parallel directory walk (rayon over directory listings read in 64 KiB batches) |
+| `src/scan/win.rs` | Win32 helpers: drives, directory listing, cluster size, compressed sizes, Recycle Bin, Explorer |
 | `src/layout.rs` | Sunburst layout and hit testing |
-| `src/render.rs` | Tessellation of sectors into an `egui::Mesh`, palette |
-| `src/ui/` | Chart widget, directory tree, largest-files list, search, toolbar and status bar |
+| `src/render.rs` | Tessellation of sectors into an `egui::Mesh`, palettes for both themes |
+| `src/ui/` | Chart widget, directory tree, Largest files, Search and Types tabs, path field, toolbar and status bar, About and Access errors windows |
 | `src/history.rs` | Back/forward navigation history |
-| `src/settings.rs` | Settings kept between runs |
+| `src/settings.rs` | Settings kept between runs, portable mode |
+| `src/i18n.rs`, `src/format.rs` | English and Russian interface; sizes, numbers and dates in the interface language |
 | `tools/` | Installer script (`setup.iss`) and release script (`make_release.py`) |
 
 ## License
