@@ -210,11 +210,14 @@ fn read_and_parse(
                     .par_iter_mut()
                     .zip(buf[..n].par_chunks_mut(rec_size))
                     .for_each(|(r, raw)| *r = parse_record(raw));
-                let (files, bytes) = recs[first..end]
+                let (files, dirs, bytes) = recs[first..end]
                     .iter()
-                    .filter(|r| r.in_use && r.base == 0 && !r.is_dir)
-                    .fold((0u64, 0u64), |(f, b), r| (f + 1, b + r.size));
+                    .filter(|r| r.in_use && r.base == 0)
+                    .fold((0u64, 0u64, 0u64), |(f, d, b), r| {
+                        if r.is_dir { (f, d + 1, b) } else { (f + 1, d, b + r.size) }
+                    });
                 progress.files.fetch_add(files, Relaxed);
+                progress.dirs.fetch_add(dirs, Relaxed);
                 progress.bytes.fetch_add(bytes, Relaxed);
             }
             let _ = free_tx.send(buf);
