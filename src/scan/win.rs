@@ -29,12 +29,13 @@ impl Drive {
     pub fn display(&self) -> String {
         let letter = self.root.trim_end_matches('\\');
         let label = if self.label.is_empty() {
+            // As Explorer names them.
             match self.kind {
-                DriveKind::Removable => "Removable",
-                DriveKind::Remote => "Network",
-                DriveKind::CdRom => "CD-ROM",
-                DriveKind::RamDisk => "RAM disk",
-                DriveKind::Fixed | DriveKind::Unknown => "Local Disk",
+                DriveKind::Removable => tr!("Removable Disk", "Съёмный диск"),
+                DriveKind::Remote => tr!("Network Drive", "Сетевой диск"),
+                DriveKind::CdRom => tr!("CD Drive", "Дисковод CD"),
+                DriveKind::RamDisk => tr!("RAM Disk", "RAM-диск"),
+                DriveKind::Fixed | DriveKind::Unknown => tr!("Local Disk", "Локальный диск"),
             }
         } else {
             self.label.as_str()
