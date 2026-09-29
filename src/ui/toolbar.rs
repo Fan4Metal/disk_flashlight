@@ -283,25 +283,30 @@ impl App {
                 ui.add(egui::Spinner::new().size(14.0));
                 let secs = h.started.elapsed().as_secs_f32();
                 let found = format!("{}, {}, {}", files(n_files), folders(n_dirs), human_size(bytes));
-                ui.label(tr!(
+                let text = tr!(
                     format!("Scanning {}  —  {found}  ({secs:.1} s)", h.path.display()),
                     format!(
                         "Сканирование {}  —  {found}  ({} с)",
                         h.path.display(),
                         format!("{secs:.1}").replace('.', ",")
                     )
-                ));
-                if errors > 0 {
-                    ui.weak(count(
-                        errors,
-                        ["access error", "access errors"],
-                        ["ошибка доступа", "ошибки доступа", "ошибок доступа"],
-                    ));
-                }
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if errors > 0 {
+                        ui.weak(count(
+                            errors,
+                            ["access error", "access errors"],
+                            ["ошибка доступа", "ошибки доступа", "ошибок доступа"],
+                        ));
+                    }
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.add(egui::Label::new(text).truncate());
+                    });
+                });
                 return;
             }
             let Some(model) = &self.model else {
-                ui.label(&self.status);
+                ui.add(egui::Label::new(&self.status).truncate());
                 return;
             };
             let root = model.node(self.nav.root);
@@ -315,19 +320,30 @@ impl App {
                 format!("Dirs: {dirs}   Files: {files}   Size: {size}   Alloc: {alloc}   Waste: {waste}"),
                 format!("Папок: {dirs}   Файлов: {files}   Размер: {size}   На диске: {alloc}   Потери: {waste}")
             ));
-            if let Some(h) = self.chart.hovered.or(self.tree_hovered) {
-                let n = model.node(h);
-                ui.separator();
-                ui.label(format!(
-                    "{}  —  {} ({})",
-                    model.name(h),
-                    human_size(n.size),
-                    human_size(n.alloc)
-                ));
-            }
+            let hovered = self.chart.hovered.or(self.tree_hovered);
+            // The errors link stays at the right end; the hovered item and
+            // then the status message take what is left, cut short with an
+            // ellipsis rather than running over the counts.
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 self.errors.link(ui);
-                ui.weak(&self.status);
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    if let Some(h) = hovered {
+                        let n = model.node(h);
+                        ui.separator();
+                        ui.add(
+                            egui::Label::new(format!(
+                                "{}  —  {} ({})",
+                                model.name(h),
+                                human_size(n.size),
+                                human_size(n.alloc)
+                            ))
+                            .truncate(),
+                        );
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.add(egui::Label::new(egui::RichText::new(&self.status).weak()).truncate());
+                    });
+                });
             });
         });
     }
