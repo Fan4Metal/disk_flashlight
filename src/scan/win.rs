@@ -53,6 +53,29 @@ fn wide_path(p: &Path) -> Vec<u16> {
     p.as_os_str().encode_wide().chain(std::iter::once(0)).collect()
 }
 
+/// Paths this long or longer need the `\\?\` prefix for most Win32 calls.
+const MAX_PATH: usize = 260;
+
+/// `p` as a NUL-terminated wide string that Win32 file functions accept
+/// even past `MAX_PATH`: a long absolute path gets the `\\?\` prefix
+/// (`\\?\UNC\` for a share), as `std::fs` does for its own calls. Such a
+/// path is taken literally, so `/` becomes `\`; shorter paths stay as
+/// they are.
+fn wide_long_path(p: &Path) -> Vec<u16> {
+    let s = p.to_string_lossy();
+    let long = s.encode_utf16().count() >= MAX_PATH;
+    let text = if !long || s.starts_with(r"\\?\") || s.starts_with(r"\\.\") {
+        return wide_path(p);
+    } else if let Some(share) = s.strip_prefix(r"\\") {
+        format!(r"\\?\UNC\{}", share.replace('/', "\\"))
+    } else if crate::scan::mft::drive_letter(p).is_some() {
+        format!(r"\\?\{}", s.replace('/', "\\"))
+    } else {
+        return wide_path(p);
+    };
+    wide(&text)
+}
+
 /// Roots of the logical drives (`C:\`), from a bitmask: instant, no I/O.
 pub fn drive_roots() -> Vec<String> {
     use windows_sys::Win32::Storage::FileSystem::GetLogicalDrives;
@@ -191,7 +214,7 @@ pub fn cluster_size(path: &Path) -> u64 {
 pub fn compressed_size(path: &Path) -> Option<u64> {
     use windows_sys::Win32::Foundation::{GetLastError, NO_ERROR};
     use windows_sys::Win32::Storage::FileSystem::{GetCompressedFileSizeW, INVALID_FILE_SIZE};
-    let wpath = wide_path(path);
+    let wpath = wide_long_path(path);
     let mut high = 0u32;
     let low = unsafe { GetCompressedFileSizeW(wpath.as_ptr(), &mut high) };
     if low == INVALID_FILE_SIZE && unsafe { GetLastError() } != NO_ERROR {
@@ -572,6 +595,32 @@ mod tests {
         assert!(out[2].is_link() && !out[2].is_dir());
         // App execution aliases are not name surrogates: plain files.
         assert!(!out[3].is_link() && !out[3].is_dir());
+    }
+
+    #[test]
+    fn long_paths_get_the_verbatim_prefix() {
+        let text = |p: &str| String::from_utf16(&wide_long_path(Path::new(p))[..]).unwrap().trim_end_matches('\0').to_string();
+        let deep = "a".repeat(300);
+        assert_eq!(text(r"C:\short"), r"C:\short");
+        assert_eq!(text(&format!(r"C:\x/{deep}")), format!(r"\\?\C:\x\{deep}"));
+        assert_eq!(text(&format!(r"\\srv\share\{deep}")), format!(r"\\?\UNC\srv\share\{deep}"));
+        assert_eq!(text(&format!(r"\\?\C:\{deep}")), format!(r"\\?\C:\{deep}"));
+        assert_eq!(text(&format!("rel\\{deep}")), format!("rel\\{deep}"));
+    }
+
+    /// A sparse file deeper than `MAX_PATH`: its size on disk is found.
+    #[test]
+    fn compressed_size_of_a_long_path() {
+        let mut dir = std::env::temp_dir().join(format!("df_long_{}", std::process::id()));
+        let base = dir.clone();
+        while dir.as_os_str().len() < MAX_PATH + 20 {
+            dir.push("d".repeat(40));
+        }
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("f.bin");
+        std::fs::write(&file, vec![1u8; 10_000]).unwrap();
+        assert_eq!(compressed_size(&file), Some(10_000));
+        std::fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]
