@@ -172,7 +172,7 @@ fn elevate_for_mft(target: Option<&std::path::Path>) -> bool {
 /// Explorer's context menu passes a drive as `"C:\"`; Windows argument
 /// parsing reads `\"` as an escaped quote, so the program receives `C:"`.
 /// A trailing quote is therefore turned back into a backslash.
-fn normalize(arg: &str) -> PathBuf {
+pub fn normalize(arg: &str) -> PathBuf {
     let arg = match arg.strip_suffix('"') {
         Some(stripped) => format!("{}\\", stripped.trim_end_matches('\\')),
         None => arg.to_string(),

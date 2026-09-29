@@ -170,6 +170,9 @@ impl App {
     }
 
     pub fn start_scan(&mut self, path: PathBuf) {
+        // `D:` typed or picked anywhere means the drive's root, not the
+        // current directory on it.
+        let path = crate::normalize(&path.to_string_lossy());
         // A mistyped path must not cost the results on screen. Network
         // paths are left to the scan thread: a server that is away can
         // take long to answer.
