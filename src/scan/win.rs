@@ -67,22 +67,9 @@ pub fn drive_roots() -> Vec<String> {
 /// it is not ready (empty card reader, etc.). This touches the volume, so a
 /// disconnected network drive can take seconds.
 pub fn drive_info(root: &str) -> Option<Drive> {
-    use windows_sys::Win32::Storage::FileSystem::{GetDriveTypeW, GetVolumeInformationW};
-    // Values of DRIVE_* from winbase.h.
-    const DRIVE_REMOVABLE: u32 = 2;
-    const DRIVE_FIXED: u32 = 3;
-    const DRIVE_REMOTE: u32 = 4;
-    const DRIVE_CDROM: u32 = 5;
-    const DRIVE_RAMDISK: u32 = 6;
+    use windows_sys::Win32::Storage::FileSystem::GetVolumeInformationW;
     let wroot = wide(root);
-    let kind = match unsafe { GetDriveTypeW(wroot.as_ptr()) } {
-        DRIVE_FIXED => DriveKind::Fixed,
-        DRIVE_REMOVABLE => DriveKind::Removable,
-        DRIVE_REMOTE => DriveKind::Remote,
-        DRIVE_CDROM => DriveKind::CdRom,
-        DRIVE_RAMDISK => DriveKind::RamDisk,
-        _ => DriveKind::Unknown,
-    };
+    let kind = drive_kind(root);
     let mut label_buf = [0u16; 261];
     let mut fs_buf = [0u16; 261];
     let ok = unsafe {
@@ -113,6 +100,28 @@ pub fn drive_info(root: &str) -> Option<Drive> {
         total: space.total,
         free: space.free,
     })
+}
+
+/// Type of the drive at `root` (`C:\`). Unlike [`drive_info`] this does
+/// not touch the volume, so it is quick even for a network drive whose
+/// server is away.
+pub fn drive_kind(root: &str) -> DriveKind {
+    use windows_sys::Win32::Storage::FileSystem::GetDriveTypeW;
+    // Values of DRIVE_* from winbase.h.
+    const DRIVE_REMOVABLE: u32 = 2;
+    const DRIVE_FIXED: u32 = 3;
+    const DRIVE_REMOTE: u32 = 4;
+    const DRIVE_CDROM: u32 = 5;
+    const DRIVE_RAMDISK: u32 = 6;
+    let wroot = wide(root);
+    match unsafe { GetDriveTypeW(wroot.as_ptr()) } {
+        DRIVE_FIXED => DriveKind::Fixed,
+        DRIVE_REMOVABLE => DriveKind::Removable,
+        DRIVE_REMOTE => DriveKind::Remote,
+        DRIVE_CDROM => DriveKind::CdRom,
+        DRIVE_RAMDISK => DriveKind::RamDisk,
+        _ => DriveKind::Unknown,
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

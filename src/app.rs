@@ -861,10 +861,16 @@ pub fn is_remote(drives: &[Drive], path: &std::path::Path) -> bool {
     if path.to_string_lossy().starts_with(r"\\") {
         return true;
     }
+    // The drive picker is filled in the background; a drive not in it yet
+    // (a path given at start-up) is asked for its type, which needs no
+    // answer from the server.
     scan::mft::drive_letter(path).is_some_and(|letter| {
-        drives.iter().any(|d| {
-            d.root.starts_with(letter.to_ascii_uppercase()) && d.kind == scan::win::DriveKind::Remote
-        })
+        let root = format!("{letter}:\\");
+        let kind = match drives.iter().find(|d| d.root == root) {
+            Some(d) => d.kind.clone(),
+            None => scan::win::drive_kind(&root),
+        };
+        kind == scan::win::DriveKind::Remote
     })
 }
 
