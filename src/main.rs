@@ -95,6 +95,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     let stored = settings::location();
+    install_panic_hook(stored.file.as_ref().and_then(|f| f.parent()).map(|d| d.join(CRASH_LOG)));
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(format!("Disk Flashlight {VERSION}"))
@@ -137,6 +138,55 @@ fn main() -> anyhow::Result<()> {
         Box::new(move |cc| Ok(Box::new(app::App::new(cc, initial)))),
     )
     .map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+/// Written next to the settings file when the app fails.
+const CRASH_LOG: &str = "crash.log";
+
+/// The release build aborts on a panic and has no console, so the window
+/// would vanish without a word: say what happened in a message box and
+/// append it to `log`, so that it can be reported. The default hook still
+/// prints it (seen in a debug build or with a console).
+fn install_panic_hook(log: Option<PathBuf>) {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        default(info);
+        let thread = std::thread::current();
+        let when = model::unix_now();
+        let report = format!(
+            "Disk Flashlight {VERSION}, Unix time {when}, thread {}\n{info}\n\n",
+            thread.name().unwrap_or("unnamed")
+        );
+        let saved = log.as_ref().filter(|path| {
+            use std::io::Write;
+            let _ = path.parent().map(std::fs::create_dir_all);
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .and_then(|mut f| f.write_all(report.as_bytes()))
+                .is_ok()
+        });
+        let text = match saved {
+            Some(path) => tr!(
+                format!(
+                    "Disk Flashlight stopped because of an internal error.\n\n{info}\n\n\
+                     The details were saved to {}.",
+                    path.display()
+                ),
+                format!(
+                    "Disk Flashlight остановлена из-за внутренней ошибки.\n\n{info}\n\n\
+                     Подробности сохранены в {}.",
+                    path.display()
+                )
+            ),
+            None => tr!(
+                format!("Disk Flashlight stopped because of an internal error.\n\n{info}"),
+                format!("Disk Flashlight остановлена из-за внутренней ошибки.\n\n{info}")
+            ),
+        };
+        scan::win::error_box("Disk Flashlight", &text);
+    }));
 }
 
 /// `--mft`: restart elevated when that enables the MFT scanner, i.e. when

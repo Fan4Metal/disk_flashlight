@@ -219,6 +219,22 @@ pub fn refresh_caption(hwnd: isize) {
     }
 }
 
+/// Show `text` in a system message box with an error icon, waiting until
+/// it is closed. It needs no window of the app, so it also works when the
+/// app is failing. user32 is declared by hand, as in `refresh_caption`.
+pub fn error_box(title: &str, text: &str) {
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn MessageBoxW(hwnd: isize, text: *const u16, caption: *const u16, kind: u32) -> i32;
+    }
+    const MB_ICONERROR: u32 = 0x10;
+    const MB_SETFOREGROUND: u32 = 0x1_0000;
+    let (text, title) = (wide(text), wide(title));
+    unsafe {
+        MessageBoxW(0, text.as_ptr(), title.as_ptr(), MB_ICONERROR | MB_SETFOREGROUND);
+    }
+}
+
 /// Windows' name for files with extension `ext` (without the dot), as the
 /// Type column of Explorer shows it: `MP4 Video`, `Текстовый документ`, in
 /// the language of Windows.
