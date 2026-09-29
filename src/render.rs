@@ -47,8 +47,12 @@ pub struct Palette {
     pub val_even: f32,
     pub val_odd: f32,
     // --- Depth mode ---
-    /// Hue (degrees) for each ring, innermost first; the last value repeats.
+    /// Hues (degrees) from the innermost ring to the outermost, spread over
+    /// `rings` rings.
     pub hues: [f32; 6],
+    /// Number of rings the chart is laid out with; [`build_mesh`] sets it
+    /// from the layout.
+    pub rings: usize,
     // --- Size mode ---
     /// Hue (degrees) of the largest sibling.
     pub hue_largest: f32,
@@ -160,6 +164,7 @@ impl Palette {
             val_even: 0.92,
             val_odd: 0.78,
             hues: [0.0, 10.0, 22.0, 34.0, 44.0, 52.0],
+            rings: crate::layout::DEFAULT_RINGS,
             hue_largest: 0.0,
             hue_smallest: 56.0,
             fade_max: 0.6,
@@ -242,6 +247,16 @@ impl Palette {
         }
     }
 
+    /// Hue of `ring` in the depth mode: `hues` stretched over `rings`, so
+    /// that the outermost ring gets the last one however many there are.
+    fn depth_hue(&self, ring: usize) -> f32 {
+        let last = self.hues.len() - 1;
+        let t = Self::depth(ring, self.rings) * last as f32;
+        let i = (t as usize).min(last - 1);
+        let (a, b) = (self.hues[i], self.hues[i + 1]);
+        a + (b - a) * (t - i as f32)
+    }
+
     /// Saturation `sat` and brightness `val` faded towards the background
     /// by `strength` (1 = fully) for `ring` of `n_rings`.
     fn faded(&self, sat: f32, val: f32, strength: f32, ring: usize, n_rings: usize) -> (f32, f32) {
@@ -282,7 +297,7 @@ impl Palette {
                 None => self.unknown,
             },
             ColorMode::Depth => {
-                let hue = self.hues[ring.min(self.hues.len() - 1)];
+                let hue = self.depth_hue(ring);
                 let val = if index.is_multiple_of(2) {
                     self.val_even
                 } else {
@@ -306,7 +321,7 @@ impl Palette {
     pub fn group_color(&self, ring: usize, n_rings: usize) -> Color32 {
         let (hue, sat) = match self.mode {
             ColorMode::Size => (self.hue_smallest, self.sat_group),
-            ColorMode::Depth => (self.hues[ring.min(self.hues.len() - 1)], self.sat_group),
+            ColorMode::Depth => (self.depth_hue(ring), self.sat_group),
             // A near grey: any hue would read as an age or a type.
             ColorMode::Age | ColorMode::Type => (40.0, 0.08),
         };
@@ -409,6 +424,10 @@ pub fn match_share(model: &Model, layout: &Layout, s: &Sector, hits: &[u64]) -> 
 /// With `hits` (search matches), sectors are coloured by how much of them
 /// matches ([`Palette::highlight`]).
 pub fn build_mesh(model: &Model, layout: &Layout, palette: &Palette, hits: Option<&[u64]>) -> Mesh {
+    let palette = &Palette {
+        rings: layout.radii.len(),
+        ..*palette
+    };
     let mut mesh = Mesh::default();
     let approx_vertices: usize = layout
         .rings
@@ -544,6 +563,24 @@ mod tests {
         assert!(g_out > g_in && b_out > b_in, "outer ring should be paler");
         // Neighbours of equal size get the same colour (no alternation).
         assert_eq!(p.color(1, 0, 4, 0.5, None, true), p.color(1, 1, 4, 0.5, None, true));
+    }
+
+    #[test]
+    fn depth_hues_span_the_rings_however_many() {
+        for rings in 1..=crate::layout::MAX_RINGS {
+            let p = Palette { rings, ..Palette::default() };
+            let hues: Vec<f32> = (0..rings).map(|r| p.depth_hue(r)).collect();
+            assert_eq!(hues[0], p.hues[0]);
+            if rings > 1 {
+                assert!((hues[rings - 1] - p.hues[p.hues.len() - 1]).abs() < 1e-3, "{rings}: {hues:?}");
+            }
+            assert!(hues.windows(2).all(|w| w[1] > w[0]), "{rings}: {hues:?}");
+        }
+        // With as many rings as hues, each ring gets its own.
+        let p = Palette { rings: 6, ..Palette::default() };
+        for (r, &h) in p.hues.iter().enumerate() {
+            assert!((p.depth_hue(r) - h).abs() < 1e-3);
+        }
     }
 
     #[test]

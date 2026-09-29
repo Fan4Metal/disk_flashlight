@@ -3,6 +3,7 @@
 //! egui's own state (panel widths) are saved by eframe itself.
 
 use crate::i18n::LangChoice;
+use crate::layout::{DEFAULT_RINGS, MAX_RINGS, MIN_RINGS};
 use crate::model::{ItemKind, Metric};
 use crate::render::ColorMode;
 use crate::ui::SideView;
@@ -12,6 +13,7 @@ const METRIC: &str = "metric";
 const THEME: &str = "theme";
 const LANGUAGE: &str = "language";
 const COLOR_MODE: &str = "color_mode";
+const RINGS: &str = "rings";
 const FOLLOW_IN_TREE: &str = "follow_in_tree";
 const LAST_PATH: &str = "last_path";
 const RECENT_PATHS: &str = "recent_paths";
@@ -30,6 +32,8 @@ pub struct Settings {
     pub language: LangChoice,
     pub metric: Metric,
     pub color_mode: ColorMode,
+    /// Number of rings of the chart.
+    pub rings: usize,
     pub follow_in_tree: bool,
     /// What the left panel shows.
     pub side_view: SideView,
@@ -56,6 +60,7 @@ impl Default for Settings {
             language: LangChoice::System,
             metric: Metric::Physical,
             color_mode: ColorMode::default(),
+            rings: DEFAULT_RINGS,
             follow_in_tree: true,
             side_view: SideView::default(),
             search_whole_word: false,
@@ -99,6 +104,10 @@ impl Settings {
                 Some("type") => ColorMode::Type,
                 _ => d.color_mode,
             },
+            rings: get(RINGS)
+                .and_then(|v| v.parse().ok())
+                .filter(|n| (MIN_RINGS..=MAX_RINGS).contains(n))
+                .unwrap_or(d.rings),
             follow_in_tree: match get(FOLLOW_IN_TREE).as_deref() {
                 Some("true") => true,
                 Some("false") => false,
@@ -167,6 +176,7 @@ impl Settings {
         };
         storage.set_string(LANGUAGE, language.into());
         storage.set_string(COLOR_MODE, color_mode.into());
+        storage.set_string(RINGS, self.rings.to_string());
         let side_view = match self.side_view {
             SideView::Folders => "folders",
             SideView::LargestFiles => "largest_files",
@@ -236,6 +246,7 @@ mod tests {
             language: LangChoice::Ru,
             metric: Metric::Logical,
             color_mode: ColorMode::Age,
+            rings: 10,
             follow_in_tree: false,
             side_view: SideView::LargestFiles,
             search_whole_word: true,
@@ -257,6 +268,7 @@ mod tests {
         let mut storage = MemStorage::default();
         storage.set_string(METRIC, "bogus".into());
         storage.set_string(FOLLOW_IN_TREE, "maybe".into());
+        storage.set_string(RINGS, "40".into());
         storage.set_string(FILES_SORT, "sideways".into());
         storage.set_string(FILES_OLDER_THAN, "-1".into());
         storage.set_string(LAST_PATH, String::new());

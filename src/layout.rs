@@ -66,8 +66,15 @@ impl Sector {
     }
 }
 
+/// Range and default of the number of rings (`LayoutParams::max_depth`),
+/// which the user chooses.
+pub const MIN_RINGS: usize = 3;
+pub const MAX_RINGS: usize = 12;
+pub const DEFAULT_RINGS: usize = 7;
+
 #[derive(Clone, Copy, Debug)]
 pub struct LayoutParams {
+    /// Number of rings around the centre.
     pub max_depth: usize,
     /// Items with a thinner arc (at the ring's outer edge) are merged into a
     /// group sector.
@@ -76,8 +83,10 @@ pub struct LayoutParams {
     pub min_arc_px: f32,
     /// Radius of the central disc as a fraction of the outer radius.
     pub center_frac: f32,
-    /// Each ring is this much thinner than the previous one.
-    pub ring_shrink: f32,
+    /// Thickness of the outermost ring relative to the first. The rings in
+    /// between thin out geometrically, so that the outer ones stay readable
+    /// however many there are.
+    pub rim_ratio: f32,
     /// Files are drawn this part of the ring's thickness away from their
     /// folder (but at least `file_inset_min_px`, at most half the ring),
     /// so that they read as files, as in OverDisk.
@@ -88,11 +97,12 @@ pub struct LayoutParams {
 impl Default for LayoutParams {
     fn default() -> Self {
         Self {
-            max_depth: 7,
+            max_depth: DEFAULT_RINGS,
             merge_arc_px: 4.0,
             min_arc_px: 1.0,
             center_frac: 0.24,
-            ring_shrink: 0.78,
+            // Seven rings, each 0.78 of the previous one.
+            rim_ratio: 0.78f32.powi(6),
             file_inset: 0.3,
             file_inset_min_px: 2.0,
         }
@@ -285,7 +295,12 @@ pub fn build_with_free(
 ) -> Layout {
     let depth = params.max_depth.max(1);
     let r0 = outer_radius * params.center_frac;
-    let s = params.ring_shrink;
+    // Each ring is `s` times as thick as the previous one.
+    let s = if depth > 1 {
+        params.rim_ratio.powf(1.0 / (depth - 1) as f32)
+    } else {
+        1.0
+    };
     // Geometric series so rings exactly fill (outer_radius - r0).
     let t0 = if (s - 1.0).abs() < 1e-4 {
         (outer_radius - r0) / depth as f32
@@ -490,6 +505,27 @@ mod tests {
             ..Default::default()
         };
         Model::from_raw(raw, "X:\\".into(), 1)
+    }
+
+    #[test]
+    fn rings_fill_the_chart_and_keep_the_rim_ratio() {
+        let m = model(vec![f("a", 10)]);
+        for depth in 1..=MAX_RINGS {
+            let p = LayoutParams { max_depth: depth, ..LayoutParams::default() };
+            let l = build(&m, 0, Metric::Logical, Pos2::ZERO, 400.0, everything(), &p);
+            assert_eq!(l.radii.len(), depth);
+            assert!((l.radii[0].0 - 400.0 * p.center_frac).abs() < 1e-3);
+            assert!((l.radii[depth - 1].1 - 400.0).abs() < 1e-2, "depth {depth}");
+            let t: Vec<f32> = l.radii.iter().map(|(r_in, r_out)| r_out - r_in).collect();
+            assert!(t.windows(2).all(|w| w[1] < w[0]), "depth {depth}: {t:?}");
+            if depth > 1 {
+                assert!((t[depth - 1] / t[0] - p.rim_ratio).abs() < 1e-4, "depth {depth}");
+            }
+        }
+        // The default keeps the old geometry: 0.78 per ring.
+        let l = build(&m, 0, Metric::Logical, Pos2::ZERO, 400.0, everything(), &LayoutParams::default());
+        let t = |i: usize| l.radii[i].1 - l.radii[i].0;
+        assert!((t(1) / t(0) - 0.78).abs() < 1e-4);
     }
 
     #[test]

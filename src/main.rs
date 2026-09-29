@@ -246,6 +246,18 @@ fn bench(path: PathBuf, allow_mft: bool) -> anyhow::Result<()> {
         thousands((mesh.indices.len() / 3) as u64)
     );
 
+    let deep = layout::LayoutParams { max_depth: layout::MAX_RINGS, ..params };
+    let t = Instant::now();
+    let l = layout::build(&model, 0, model::Metric::Physical, center, 380.0, view, &deep);
+    let mesh = render::build_mesh(&model, &l, &render::Palette::default(), None);
+    println!(
+        "{} rings: {:.2}ms  ({} sectors, {} vertices)",
+        layout::MAX_RINGS,
+        t.elapsed().as_secs_f64() * 1e3,
+        thousands(l.sector_count() as u64),
+        thousands(mesh.vertices.len() as u64)
+    );
+
     // Zoomed in: the 1200x800 view looks at the rings above the centre, so
     // most of the chart is culled. Work must stay bounded by the view.
     for zoom in [10.0f32, 50.0, 200.0] {

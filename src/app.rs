@@ -8,6 +8,7 @@ use egui::{Key, Modifiers};
 
 use crate::format::human_size;
 use crate::history::History;
+use crate::layout;
 use crate::model::{Metric, Model, NO_NODE};
 use crate::scan::win::{DiskSpace, Drive};
 use crate::scan::{self, Method, ScanHandle};
@@ -154,6 +155,7 @@ impl App {
             refresh_caption: false,
         };
         app.chart.palette.mode = settings.color_mode;
+        app.chart.params.max_depth = settings.rings;
         app.about.lang = settings.language;
         app.tree.follow_hover = settings.follow_in_tree;
         app.search.whole_word = settings.search_whole_word;
@@ -585,6 +587,15 @@ impl App {
         self.shown_theme = Some(theme);
     }
 
+    /// Show `n` rings in the chart, kept within the allowed range.
+    pub fn set_rings(&mut self, n: usize) {
+        let n = n.clamp(layout::MIN_RINGS, layout::MAX_RINGS);
+        if n != self.chart.params.max_depth {
+            self.chart.params.max_depth = n;
+            self.chart.invalidate();
+        }
+    }
+
     fn handle_keys(&mut self, ctx: &egui::Context) {
         // Do not steal keys from a focused text field.
         if ctx.memory(|m| m.focused().is_some()) {
@@ -600,7 +611,10 @@ impl App {
                 self.run_command(ItemCommand::CopyPath(id), ctx);
             }
         }
-        let (back, fwd, up, rescan, about, find) = ctx.input(|i| {
+        let (back, fwd, up, rescan, about, find, more, fewer) = ctx.input(|i| {
+            // `+` needs Shift on many layouts, so Shift is allowed; Ctrl with
+            // them is egui's interface zoom.
+            let plain = !i.modifiers.command && !i.modifiers.alt;
             (
                 i.modifiers.matches_exact(Modifiers::ALT) && i.key_pressed(Key::ArrowLeft),
                 i.modifiers.matches_exact(Modifiers::ALT) && i.key_pressed(Key::ArrowRight),
@@ -608,8 +622,16 @@ impl App {
                 i.key_pressed(Key::F5),
                 i.key_pressed(Key::F1),
                 i.modifiers.matches_exact(Modifiers::COMMAND) && i.key_pressed(Key::F),
+                plain && (i.key_pressed(Key::Plus) || i.key_pressed(Key::Equals)),
+                plain && i.key_pressed(Key::Minus),
             )
         });
+        if more {
+            self.set_rings(self.chart.params.max_depth + 1);
+        }
+        if fewer {
+            self.set_rings(self.chart.params.max_depth.saturating_sub(1));
+        }
         if about {
             self.about.open = true;
         }
@@ -643,6 +665,7 @@ impl eframe::App for App {
             language: self.about.lang,
             metric: self.metric,
             color_mode: self.chart.palette.mode,
+            rings: self.chart.params.max_depth,
             follow_in_tree: self.tree.follow_hover,
             side_view: self.side,
             search_whole_word: self.search.whole_word,

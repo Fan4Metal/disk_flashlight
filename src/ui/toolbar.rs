@@ -7,6 +7,7 @@ use egui::{ThemePreference, Ui};
 use crate::app::App;
 use crate::format::human_size;
 use crate::i18n::{count, files, folders};
+use crate::layout;
 use crate::model::Metric;
 use crate::render::ColorMode;
 
@@ -214,6 +215,21 @@ impl App {
                 self.chart.palette.mode = mode;
                 self.chart.invalidate();
             }
+
+            let mut rings = self.chart.params.max_depth;
+            egui::ComboBox::from_id_salt("rings")
+                .selected_text(tr!(format!("Rings: {rings}"), format!("Колец: {rings}")))
+                .show_ui(ui, |ui| {
+                    for n in layout::MIN_RINGS..=layout::MAX_RINGS {
+                        ui.selectable_value(&mut rings, n, n.to_string());
+                    }
+                })
+                .response
+                .on_hover_text(tr!(
+                    "How many levels of folders the chart shows around the centre (+ and − keys)",
+                    "Сколько уровней папок диаграмма показывает вокруг центра (клавиши + и −)"
+                ));
+            self.set_rings(rings);
 
             ui.checkbox(&mut self.tree.follow_hover, tr!("Follow in tree", "Следить в дереве"))
                 .on_hover_text(tr!(
