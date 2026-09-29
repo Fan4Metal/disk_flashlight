@@ -8,6 +8,8 @@ use crate::i18n::{LangChoice, set_lang, system_lang};
 
 const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
 const LICENSE: &str = env!("CARGO_PKG_LICENSE");
+/// Cargo joins several authors with `:`.
+const AUTHORS: &str = env!("CARGO_PKG_AUTHORS");
 /// Displayed icon size in points.
 const ICON_SIZE: f32 = 64.0;
 /// Width of the language list, enough for its longest entry.
@@ -59,6 +61,8 @@ impl AboutDialog {
                     "Анализатор занятого места на дисках Windows с круговой диаграммой."
                 ));
                 ui.add_space(8.0);
+                let authors = AUTHORS.replace(':', ", ");
+                ui.label(tr!(format!("Author: {authors}"), format!("Автор: {authors}")));
                 ui.hyperlink_to(tr!("Homepage", "Сайт проекта"), REPOSITORY)
                     .on_hover_text(REPOSITORY);
                 ui.weak(tr!(format!("{LICENSE} License"), format!("Лицензия {LICENSE}")));

@@ -1,6 +1,7 @@
 [package]
 name = "disk_flashlight"
 version = "0.3.0"
+authors = ["Fan4_Metal"]
 edition = "2024"
 description = "Disk space analyzer with a sunburst (sector) chart, in the spirit of OverDisk"
 repository = "https://github.com/Fan4Metal/disk_flashlight"
