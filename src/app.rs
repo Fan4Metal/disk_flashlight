@@ -176,7 +176,8 @@ impl App {
         // A mistyped path must not cost the results on screen. Network
         // paths are left to the scan thread: a server that is away can
         // take long to answer.
-        if !is_remote(&self.drives, &path) {
+        let remote = is_remote(&self.drives, &path);
+        if !remote {
             let problem = match std::fs::metadata(&path) {
                 Ok(m) if m.is_dir() => None,
                 Ok(_) => Some(tr!("not a folder", "это не папка").to_string()),
@@ -196,8 +197,10 @@ impl App {
         // Another drive or folder: its old results go at once, and the
         // spinner shows until the new ones arrive. A rescan of the same
         // path keeps them, and then the current folder and the history.
+        // So does a network path, which could not be checked above: if
+        // the server does not answer, the results on screen stay.
         let path_str = path.to_string_lossy();
-        if self.model.as_ref().is_some_and(|m| !same_path(&m.root_path, &path_str)) {
+        if !remote && self.model.as_ref().is_some_and(|m| !same_path(&m.root_path, &path_str)) {
             self.clear_model();
         }
         self.status = tr!(format!("Scanning {}", path.display()), format!("Сканирование {}", path.display()));
@@ -306,10 +309,18 @@ impl App {
             Some(Err(_)) if h.progress.cancel.load(std::sync::atomic::Ordering::Relaxed) => {
                 self.status = tr!("Scan cancelled", "Сканирование отменено").into();
                 self.scan = None;
+                if let Some(m) = &self.model {
+                    self.drive = drive_root_of(&m.root_path);
+                }
             }
             Some(Err(e)) => {
                 self.status = tr!(format!("Scan failed: {e}"), format!("Сканирование не удалось: {e}"));
                 self.scan = None;
+                // Results kept on screen (a network path that failed) are
+                // shown with their own drive in the picker.
+                if let Some(m) = &self.model {
+                    self.drive = drive_root_of(&m.root_path);
+                }
             }
         }
     }
