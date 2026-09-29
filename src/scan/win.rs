@@ -139,15 +139,42 @@ pub fn disk_space(path: &Path) -> Option<DiskSpace> {
     (ok != 0).then_some(DiskSpace { total, free })
 }
 
-/// Bytes per cluster for the volume containing `path` (4096 on failure).
-pub fn cluster_size(path: &Path) -> u64 {
-    use windows_sys::Win32::Storage::FileSystem::{GetDiskFreeSpaceW, GetVolumePathNameW};
+/// Root of the volume (or share) holding `path`, NUL-terminated.
+fn volume_root(path: &Path) -> Option<[u16; 512]> {
+    use windows_sys::Win32::Storage::FileSystem::GetVolumePathNameW;
     let wpath = wide_path(path);
     let mut vol = [0u16; 512];
     let ok = unsafe { GetVolumePathNameW(wpath.as_ptr(), vol.as_mut_ptr(), vol.len() as u32) };
-    if ok == 0 {
+    (ok != 0).then_some(vol)
+}
+
+/// Name of the file system of the volume holding `path` (`NTFS`, `exFAT`).
+pub fn file_system(path: &Path) -> Option<String> {
+    use windows_sys::Win32::Storage::FileSystem::GetVolumeInformationW;
+    let vol = volume_root(path)?;
+    let mut fs_buf = [0u16; 261];
+    let ok = unsafe {
+        GetVolumeInformationW(
+            vol.as_ptr(),
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            fs_buf.as_mut_ptr(),
+            fs_buf.len() as u32,
+        )
+    };
+    let len = fs_buf.iter().position(|&c| c == 0).unwrap_or(fs_buf.len());
+    (ok != 0).then(|| String::from_utf16_lossy(&fs_buf[..len]))
+}
+
+/// Bytes per cluster for the volume containing `path` (4096 on failure).
+pub fn cluster_size(path: &Path) -> u64 {
+    use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceW;
+    let Some(vol) = volume_root(path) else {
         return 4096;
-    }
+    };
     let mut spc = 0u32;
     let mut bps = 0u32;
     let mut free = 0u32;
@@ -256,6 +283,10 @@ pub struct DirEntry {
     pub reparse_tag: u32,
     /// Logical size (end of file).
     pub size: u64,
+    /// Allocated size as listed: whole clusters, except for data kept in
+    /// the file's MFT record on NTFS, where it is the data's length rounded
+    /// to 8 bytes. Stale for the second and later names of a hard link.
+    pub alloc: u64,
     /// Last write time in Unix seconds, 0 if unknown.
     pub modified: u32,
 }
@@ -353,6 +384,7 @@ fn parse_full_dir_info(buf: &[u8], out: &mut Vec<DirEntry>) {
                 // For reparse points the EA size field carries the tag.
                 reparse_tag: u32_at(pos + offset_of!(Info, EaSize)),
                 size: u64_at(pos + offset_of!(Info, EndOfFile)),
+                alloc: u64_at(pos + offset_of!(Info, AllocationSize)),
                 modified: crate::model::unix_from_filetime(u64_at(pos + offset_of!(Info, LastWriteTime))),
             });
         }

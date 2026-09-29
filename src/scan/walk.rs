@@ -74,9 +74,13 @@ pub fn scan(root: &Path, progress: &Progress) -> anyhow::Result<Model> {
     }
     let root_path = root.to_string_lossy().into_owned();
     let cluster = super::win::cluster_size(root);
+    let vol = Volume {
+        cluster,
+        ntfs: super::win::file_system(root).is_some_and(|fs| fs.eq_ignore_ascii_case("NTFS")),
+    };
     let name = root_display_name(root);
     let modified = meta.modified().ok().map_or(0, unix_time);
-    let raw = scan_dir(root, name, modified, cluster, progress);
+    let raw = scan_dir(root, name, modified, vol, progress);
     if progress.cancel.load(Relaxed) {
         anyhow::bail!(tr!("scan cancelled", "сканирование отменено"));
     }
@@ -96,6 +100,27 @@ fn root_display_name(root: &Path) -> String {
     }
 }
 
+/// What the walk needs to know about the volume.
+#[derive(Clone, Copy)]
+struct Volume {
+    cluster: u64,
+    ntfs: bool,
+}
+
+/// Space on disk of a plain (not compressed, not sparse) file of `size`
+/// bytes whose listing gives `listed` allocated bytes. On NTFS a small
+/// file's data can live in its MFT record and take no cluster; its listed
+/// allocation is then not a whole number of clusters, which a file with
+/// clusters never has. Otherwise the size is rounded up to clusters: the
+/// listed allocation of a hard link's other names can be out of date.
+fn plain_alloc(size: u64, listed: u64, vol: Volume) -> u64 {
+    if vol.ntfs && !listed.is_multiple_of(vol.cluster) {
+        0
+    } else {
+        round_up(size, vol.cluster)
+    }
+}
+
 #[inline]
 fn round_up(size: u64, cluster: u64) -> u64 {
     if size == 0 {
@@ -107,7 +132,7 @@ fn round_up(size: u64, cluster: u64) -> u64 {
 
 /// `modified` is the folder's own last write time, from its parent's
 /// listing.
-fn scan_dir(path: &Path, name: String, modified: u32, cluster: u64, progress: &Progress) -> RawDir {
+fn scan_dir(path: &Path, name: String, modified: u32, vol: Volume, progress: &Progress) -> RawDir {
     let mut dir = RawDir {
         name,
         modified,
@@ -143,10 +168,10 @@ fn scan_dir(path: &Path, name: String, modified: u32, cluster: u64, progress: &P
         }
         let alloc = if e.attrs & (FILE_ATTRIBUTE_COMPRESSED | FILE_ATTRIBUTE_SPARSE_FILE) != 0 {
             super::win::compressed_size(&path.join(&e.name))
-                .map(|s| round_up(s, cluster))
-                .unwrap_or_else(|| round_up(e.size, cluster))
+                .map(|s| round_up(s, vol.cluster))
+                .unwrap_or_else(|| round_up(e.size, vol.cluster))
         } else {
-            round_up(e.size, cluster)
+            plain_alloc(e.size, e.alloc, vol)
         };
         bytes += e.size;
         dir.files.push(RawFile {
@@ -166,7 +191,44 @@ fn scan_dir(path: &Path, name: String, modified: u32, cluster: u64, progress: &P
     }
     dir.subdirs = subdirs
         .into_par_iter()
-        .map(|(p, n, t)| scan_dir(&p, n, t, cluster, progress))
+        .map(|(p, n, t)| scan_dir(&p, n, t, vol, progress))
         .collect();
     dir
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn data_in_the_mft_record_takes_no_cluster() {
+        let ntfs = Volume { cluster: 4096, ntfs: true };
+        // As listed on NTFS: 10 bytes kept in the record show as 16.
+        assert_eq!(plain_alloc(10, 16, ntfs), 0);
+        assert_eq!(plain_alloc(900, 4096, ntfs), 4096);
+        assert_eq!(plain_alloc(0, 0, ntfs), 0);
+        // A hard link listed with an old allocation: the size decides.
+        assert_eq!(plain_alloc(50_000, 8192, ntfs), 53_248);
+        // Other file systems (a share counting 512-byte blocks) round up.
+        let other = Volume { ntfs: false, ..ntfs };
+        assert_eq!(plain_alloc(1000, 1024, other), 4096);
+    }
+
+    /// On a real NTFS volume (the temporary folder), a tiny file costs no
+    /// cluster and a larger one whole clusters.
+    #[test]
+    fn walk_counts_resident_files_as_free() {
+        let dir = std::env::temp_dir().join(format!("df_walk_{}", std::process::id()));
+        if !super::super::win::file_system(&std::env::temp_dir()).is_some_and(|fs| fs == "NTFS") {
+            return;
+        }
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("tiny"), b"0123456789").unwrap();
+        std::fs::write(dir.join("big"), vec![1u8; 100_000]).unwrap();
+        let m = scan(&dir, &Progress::default()).unwrap();
+        let alloc = |name: &str| m.node(m.children(0).find(|&c| m.name(c) == name).unwrap()).alloc;
+        assert_eq!(alloc("tiny"), 0);
+        assert_eq!(alloc("big"), 100_000u64.div_ceil(m.cluster_size) * m.cluster_size);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }
