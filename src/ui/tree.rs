@@ -71,6 +71,9 @@ pub struct TreeView {
     peek: Vec<u32>,
     /// Scroll offset and height of the list during the last frame.
     viewport: (f32, f32),
+    /// How much wider than the list its rows were in the last frame.
+    #[cfg(test)]
+    overflow: f32,
 }
 
 impl Default for TreeView {
@@ -86,6 +89,8 @@ impl Default for TreeView {
             peek_target: None,
             peek: Vec::new(),
             viewport: (0.0, 0.0),
+            #[cfg(test)]
+            overflow: 0.0,
         };
         t.expanded.insert(0);
         t
@@ -234,6 +239,12 @@ impl TreeView {
             area = area.vertical_scroll_offset(y);
         }
         let out = area.show_rows(ui, ROW_HEIGHT, self.rows.len(), |ui, range| {
+            // The sizes are right-aligned at the edge of the list, and egui
+            // rounds them outwards to whole pixels: a row could end up a
+            // fraction of a point wider than the list, which showed an
+            // empty horizontal scroll bar. A point to spare absorbs that;
+            // really long rows (deep folders) still scroll.
+            ui.set_max_width(ui.available_width() - 1.0);
             for i in range {
                 let (id, depth) = self.rows[i];
                 let node = model.node(id);
@@ -272,6 +283,10 @@ impl TreeView {
             }
         });
         self.viewport = (out.state.offset.y, out.inner_rect.height());
+        #[cfg(test)]
+        {
+            self.overflow = out.content_size.x - out.inner_rect.width();
+        }
 
         if let Some(id) = toggled {
             if let Some(i) = self.peek.iter().position(|&p| p == id) {
@@ -330,6 +345,37 @@ mod tests {
         // Up to a: a1 collapses again.
         t.reveal(&m, id(&["a"]));
         assert_eq!(rows(&mut t, &m), ["root", "a", "a1", "a2", "b"]);
+    }
+
+    /// In a side panel like the app's, at the usual display scales and at
+    /// panel widths a drag can leave, rows never overflow the list, so no
+    /// horizontal scroll bar shows up.
+    #[test]
+    fn rows_fit_the_list_at_any_scale() {
+        let names = ["Users", "Program Files (x86)", "Windows", "ProgramData", "$Recycle.Bin", "System Volume Information"];
+        let subs = names.iter().enumerate().map(|(i, n)| dir(n, 1000 - i as u64, vec![dir("x", 1, vec![])])).collect();
+        let m = Model::from_raw(dir("C:", 1, subs), "C:\\".into(), 1);
+        for ppp in [1.0f32, 1.25, 1.5, 1.75, 2.0] {
+            for width in [300.0f32, 301.0, 302.5, 333.3, 417.7] {
+                let ctx = egui::Context::default();
+                ctx.all_styles_mut(|s| s.spacing.scroll = egui::style::ScrollStyle::solid());
+                ctx.set_pixels_per_point(ppp);
+                let mut t = TreeView::default();
+                for _ in 0..3 {
+                    let input = egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0))),
+                        ..Default::default()
+                    };
+                    let mut out = ctx.run_ui(input, |ui| {
+                        egui::Panel::left("tree").resizable(true).default_size(width).show(ui, |ui| {
+                            t.show(ui, &m, 0, Metric::Logical, None, false);
+                        });
+                    });
+                    out.textures_delta.clear();
+                }
+                assert!(t.overflow <= 0.0, "scale {ppp}, width {width}: rows {} wider", t.overflow);
+            }
+        }
     }
 
     #[test]
