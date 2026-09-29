@@ -303,6 +303,10 @@ impl App {
                 self.set_model(model);
                 self.scan = None;
             }
+            Some(Err(_)) if h.progress.cancel.load(std::sync::atomic::Ordering::Relaxed) => {
+                self.status = tr!("Scan cancelled", "Сканирование отменено").into();
+                self.scan = None;
+            }
             Some(Err(e)) => {
                 self.status = tr!(format!("Scan failed: {e}"), format!("Сканирование не удалось: {e}"));
                 self.scan = None;
