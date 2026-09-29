@@ -29,6 +29,8 @@ ICON = ROOT / "target" / "app.ico"
 BUNDLED_FILES = ["LICENSE", "README.md", "README.ru.md"]
 # Folder inside the portable archive, so that extracting "here" does not drop the exe among other files.
 PORTABLE_DIR = "Disk Flashlight"
+# Must match settings::PORTABLE_FILE in src/settings.rs.
+PORTABLE_SETTINGS = "disk_flashlight.ron"
 
 ISCC_PATHS = [
     Path(R"C:\Program Files (x86)\Inno Setup 6\ISCC.exe"),
@@ -149,13 +151,17 @@ def check_prerequisites() -> tuple[str, Path]:
 
 
 def make_portable_zip(version: str) -> Path:
-    """Archive with just the exe in the PORTABLE_DIR folder (the documentation is on GitHub)."""
+    """Archive with the exe and an empty settings file in the PORTABLE_DIR folder (the documentation is on GitHub).
+
+    The settings file next to the exe (settings::PORTABLE_FILE) makes the copy keep its settings there
+    instead of in %APPDATA%."""
     archive = DIST_DIR / f"Disk_Flashlight_{version}_portable.zip"
     # Earlier builds made a portable exe, which is no longer released: remove it so that it is not uploaded.
     stale = DIST_DIR / f"Disk_Flashlight_{version}_portable.exe"
     stale.unlink(missing_ok=True)
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as z:
         z.write(EXE, f"{PORTABLE_DIR}/{EXE.name}")
+        z.writestr(f"{PORTABLE_DIR}/{PORTABLE_SETTINGS}", "")
     return archive
 
 

@@ -62,6 +62,17 @@ impl AboutDialog {
                 ui.hyperlink_to(tr!("Homepage", "Сайт проекта"), REPOSITORY)
                     .on_hover_text(REPOSITORY);
                 ui.weak(tr!(format!("{LICENSE} License"), format!("Лицензия {LICENSE}")));
+                let stored = crate::settings::location();
+                let place = if stored.portable {
+                    tr!("Settings: next to the program (portable)", "Настройки: рядом с программой (портативно)")
+                } else {
+                    tr!("Settings: in the user profile", "Настройки: в профиле пользователя")
+                };
+                let place = ui.weak(place);
+                match &stored.file {
+                    Some(file) => place.on_hover_text(file.display().to_string()),
+                    None => place.on_hover_text(tr!("Settings are not saved", "Настройки не сохраняются")),
+                };
                 ui.add_space(10.0);
                 ui.separator();
                 ui.add_space(6.0);

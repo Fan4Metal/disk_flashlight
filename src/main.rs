@@ -23,7 +23,8 @@ use format::{human_size, thousands};
 /// Version from Cargo.toml, shared by the window title, `--version`, the
 /// installer and the GitHub release tag.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-/// eframe app id; also names the settings folder in `%APPDATA%`.
+/// eframe app id; also names the settings folder in `%APPDATA%` (unless the
+/// copy is portable, see `settings::location`).
 const APP_ID: &str = "Disk Flashlight";
 
 /// The saved window was maximized: it is created normal and maximized once
@@ -93,6 +94,7 @@ fn main() -> anyhow::Result<()> {
         return Ok(()); // the elevated copy takes over
     }
 
+    let stored = settings::location();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(format!("Disk Flashlight {VERSION}"))
@@ -104,7 +106,10 @@ fn main() -> anyhow::Result<()> {
                 height: 64,
             }),
         // Centre only on the first run; later runs restore the saved window.
-        centered: !eframe::storage_dir(APP_ID).is_some_and(|d| d.join("app.ron").exists()),
+        centered: !stored.has_saved(),
+        // A portable copy keeps its settings next to the exe; otherwise
+        // eframe's own place in %APPDATA%.
+        persistence_path: if stored.portable { stored.file.clone() } else { None },
         // 4x MSAA: the chart is one big triangle mesh without egui's edge
         // feathering, so thin sectors and arcs would otherwise be jagged.
         // DF_MSAA=1 turns it off (for comparison or a GPU without MSAA).
