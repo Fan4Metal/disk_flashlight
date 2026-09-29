@@ -157,8 +157,13 @@ pub fn scan(root: &Path, progress: &Progress) -> anyhow::Result<Model> {
 
 /// Stream the MFT in large blocks. A reader thread keeps the disk busy while
 /// the previous block is parsed in parallel on the rayon pool.
+///
+/// A record can straddle two runs (clusters smaller than a record, or a run
+/// of an odd number of 512-byte clusters): the part read at the end of one
+/// run is carried to the front of the next block, so that every block holds
+/// whole records only.
 fn read_and_parse(
-    mut vol: File,
+    mut vol: impl Read + Seek + Send,
     runs: &[(u64, u64)],
     cluster: u64,
     mft_len: u64,
@@ -179,24 +184,44 @@ fn read_and_parse(
     std::thread::scope(|s| {
         s.spawn(move || {
             let mut vcn_byte = 0u64; // byte offset within the MFT stream
+            // Beginning of a record read at the end of the last block.
+            let mut carry: Vec<u8> = Vec::with_capacity(rec_size);
+            // A buffer that ended up holding no whole record, kept for reuse.
+            let mut spare: Option<Vec<u8>> = None;
             for &(lcn, clusters) in runs {
                 let mut remaining = (clusters * cluster).min(mft_len.saturating_sub(vcn_byte));
                 let mut disk = lcn * cluster;
                 while remaining > 0 && !progress.cancel.load(Relaxed) {
-                    let Ok(mut buf) = free_rx.recv() else { return };
-                    let n = remaining.min(READ_CHUNK as u64) as usize;
+                    let mut buf = match spare.take() {
+                        Some(b) => b,
+                        None => match free_rx.recv() {
+                            Ok(b) => b,
+                            Err(_) => return,
+                        },
+                    };
+                    let c = carry.len();
+                    buf[..c].copy_from_slice(&carry);
+                    let n = remaining.min((READ_CHUNK - c) as u64) as usize;
                     let res = vol
                         .seek(SeekFrom::Start(disk))
-                        .and_then(|_| vol.read_exact(&mut buf[..n]));
-                    let first = (vcn_byte / rec_size as u64) as usize;
-                    let msg = res.map(|_| (first, buf, n));
-                    let failed = msg.is_err();
-                    if full_tx.send(msg).is_err() || failed {
+                        .and_then(|_| vol.read_exact(&mut buf[c..c + n]));
+                    if let Err(e) = res {
+                        let _ = full_tx.send(Err(e));
                         return;
                     }
+                    // The start of `buf` is at a record boundary of the stream.
+                    let first = ((vcn_byte - c as u64) / rec_size as u64) as usize;
+                    let whole = (c + n) / rec_size * rec_size;
+                    carry.clear();
+                    carry.extend_from_slice(&buf[whole..c + n]);
                     disk += n as u64;
                     vcn_byte += n as u64;
                     remaining -= n as u64;
+                    if whole == 0 {
+                        spare = Some(buf);
+                    } else if full_tx.send(Ok((first, buf, whole))).is_err() {
+                        return;
+                    }
                 }
             }
             // Dropping `full_tx` ends the consumer loop.
@@ -277,13 +302,10 @@ fn mft_runs(vol: &mut File, vd: &NtfsVolumeData) -> anyhow::Result<Vec<(u64, u64
 
     for seg in list_segments.into_iter().filter(|&s| s != 0) {
         let known = flatten(&extents);
-        let off = seg * rec_size as u64;
-        let Some(disk) = vcn_byte_to_disk(&known, off, cluster) else {
-            bail!("$MFT extension record {seg} not reachable");
-        };
         let mut rec = vec![0u8; rec_size];
-        vol.seek(SeekFrom::Start(disk))?;
-        vol.read_exact(&mut rec)?;
+        if !read_stream(vol, &known, seg * rec_size as u64, &mut rec, cluster)? {
+            bail!("$MFT extension record {seg} not reachable");
+        }
         if !apply_fixups(&mut rec) {
             continue;
         }
@@ -305,15 +327,33 @@ fn flatten(extents: &[(u64, Vec<(u64, u64)>)]) -> Vec<(u64, u64)> {
     e.into_iter().flat_map(|(_, r)| r.iter().copied()).collect()
 }
 
-fn vcn_byte_to_disk(runs: &[(u64, u64)], mut off: u64, cluster: u64) -> Option<u64> {
+/// Read `buf.len()` bytes at offset `off` of the stream laid out on disk
+/// by `runs`, in pieces where it crosses from one run to the next; `false`
+/// if the runs end first.
+fn read_stream(
+    vol: &mut (impl Read + Seek),
+    runs: &[(u64, u64)],
+    mut off: u64,
+    buf: &mut [u8],
+    cluster: u64,
+) -> std::io::Result<bool> {
+    let mut done = 0;
     for &(lcn, len) in runs {
-        let bytes = len * cluster;
-        if off < bytes {
-            return Some(lcn * cluster + off);
+        if done == buf.len() {
+            break;
         }
-        off -= bytes;
+        let bytes = len * cluster;
+        if off >= bytes {
+            off -= bytes;
+            continue;
+        }
+        let n = ((bytes - off) as usize).min(buf.len() - done);
+        vol.seek(SeekFrom::Start(lcn * cluster + off))?;
+        vol.read_exact(&mut buf[done..done + n])?;
+        done += n;
+        off = 0;
     }
-    None
+    Ok(done == buf.len())
 }
 
 /// Segment numbers of records holding `$DATA` extents, from a resident
@@ -829,6 +869,43 @@ mod tests {
         assert!(!parse_record(&mut r).in_use);
         let mut r = record(0, 0, &[file_name_attr(5, "x", 1)]);
         assert!(!parse_record(&mut r).in_use);
+    }
+
+    /// Records of 1 KiB on 512-byte clusters, the MFT in runs of odd length:
+    /// records cut by a run boundary are put together again, across blocks.
+    #[test]
+    fn reads_records_split_across_runs() {
+        const CLUSTER: u64 = 512;
+        let n_records = 9;
+        let stream: Vec<u8> = (0..n_records)
+            .flat_map(|i| record(REC_IN_USE, 0, &[file_name_attr(5, &format!("f{i}"), 1)]))
+            .collect();
+        // Clusters of the stream placed on the "disk" in runs of 3, 1, 1, 4
+        // and 9 clusters, out of order and apart; the third run alone holds
+        // no whole record.
+        let runs = [(40u64, 3u64), (10, 1), (20, 1), (30, 4), (60, 9)];
+        let mut disk = vec![0u8; 80 * CLUSTER as usize];
+        let mut at = 0usize;
+        for &(lcn, len) in &runs {
+            let bytes = (len * CLUSTER) as usize;
+            let d = (lcn * CLUSTER) as usize;
+            disk[d..d + bytes].copy_from_slice(&stream[at..at + bytes]);
+            at += bytes;
+        }
+        let mut recs = vec![Rec::default(); n_records];
+        let progress = Progress::default();
+        let vol = std::io::Cursor::new(disk.clone());
+        read_and_parse(vol, &runs, CLUSTER, stream.len() as u64, 1024, &mut recs, &progress).unwrap();
+        let names: Vec<String> = recs.iter().map(|r| r.name.as_deref().unwrap_or("-").to_string()).collect();
+        assert_eq!(names, (0..n_records).map(|i| format!("f{i}")).collect::<Vec<_>>());
+        assert_eq!(progress.files.load(Relaxed), n_records as u64);
+
+        // One record read on its own, also split between two runs.
+        let mut rec = vec![0u8; 1024];
+        let mut vol = std::io::Cursor::new(disk);
+        assert!(read_stream(&mut vol, &runs, 1024, &mut rec, CLUSTER).unwrap());
+        assert_eq!(parse_record(&mut rec).name.as_deref(), Some("f1"));
+        assert!(!read_stream(&mut vol, &runs, 9 * 1024, &mut rec, CLUSTER).unwrap());
     }
 
     #[test]
