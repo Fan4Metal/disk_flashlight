@@ -520,6 +520,46 @@ impl App {
         }
     }
 
+    /// Scan what was dropped on the window (the first item, if several):
+    /// a folder or a drive, or the folder of a file.
+    fn handle_drop(&mut self, ctx: &egui::Context) {
+        let dropped = ctx.input(|i| i.raw.dropped_files.first().map(|f| f.path().to_path_buf()));
+        let Some(path) = dropped else { return };
+        let target = drop_target(&path);
+        let text = target.to_string_lossy().into_owned();
+        self.drive = drive_root_of(&text);
+        self.custom_path = text;
+        self.start_scan(target);
+    }
+
+    /// While something is dragged over the window: a veil over it saying
+    /// what a drop would scan.
+    fn drop_overlay(&self, ctx: &egui::Context) {
+        let hovered = ctx.input(|i| i.raw.hovered_files.first().map(|f| f.path.clone()));
+        let Some(path) = hovered else { return };
+        let target = path.as_deref().map(drop_target);
+        let rect = ctx.content_rect();
+        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("drop")));
+        painter.rect_filled(rect, 0.0, egui::Color32::from_black_alpha(150));
+        let c = rect.center();
+        painter.text(
+            c - egui::vec2(0.0, 16.0),
+            egui::Align2::CENTER_CENTER,
+            tr!("Drop to scan", "Отпустите, чтобы просканировать"),
+            egui::FontId::proportional(28.0),
+            egui::Color32::WHITE,
+        );
+        if let Some(target) = target {
+            painter.text(
+                c + egui::vec2(0.0, 20.0),
+                egui::Align2::CENTER_CENTER,
+                target.display().to_string(),
+                egui::FontId::proportional(16.0),
+                egui::Color32::from_gray(220),
+            );
+        }
+    }
+
     /// Bring the window caption in line with the theme. egui passes a new
     /// theme to the window at the end of the frame it changed in, and
     /// Windows applies it to the caption only on the next repaint of the
@@ -621,6 +661,8 @@ impl eframe::App for App {
             ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
         }
         self.follow_theme(&ctx, frame);
+        self.handle_drop(&ctx);
+        self.drop_overlay(&ctx);
         self.poll_drives();
         self.poll_scan(&ctx);
         self.poll_delete();
@@ -773,6 +815,15 @@ fn same_path(a: &str, b: &str) -> bool {
     a.trim_end_matches('\\').eq_ignore_ascii_case(b.trim_end_matches('\\'))
 }
 
+/// What a `path` dropped on the window scans: itself when it is a folder
+/// or a drive, else (a file) the folder it is in.
+fn drop_target(path: &std::path::Path) -> PathBuf {
+    match path.parent() {
+        Some(folder) if !path.is_dir() => folder.to_path_buf(),
+        _ => path.to_path_buf(),
+    }
+}
+
 /// `C:\` (also `c:`) -> `Some("C:\\")`; any other path -> `None`.
 fn drive_root_of(path: &str) -> Option<String> {
     let p = std::path::Path::new(path);
@@ -793,7 +844,18 @@ pub fn quote_arg(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_RECENT, drive_root_of, push_recent, quote_arg, same_path};
+    use super::{MAX_RECENT, drive_root_of, drop_target, push_recent, quote_arg, same_path};
+
+    #[test]
+    fn dropped_items() {
+        let dir = std::env::temp_dir().join(format!("df_drop_{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        std::fs::write(dir.join("file.txt"), b"").unwrap();
+        assert_eq!(drop_target(&dir.join("sub")), dir.join("sub"));
+        assert_eq!(drop_target(&dir.join("file.txt")), dir);
+        assert_eq!(drop_target(std::path::Path::new(r"C:\")), std::path::Path::new(r"C:\"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn recent_folders() {
