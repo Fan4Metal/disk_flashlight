@@ -707,7 +707,9 @@ impl eframe::App for App {
         self.poll_scan(&ctx);
         self.poll_delete();
         self.show_confirm_delete(&ctx);
-        if !self.about.open && self.confirm_delete.is_none() {
+        // Not while a window is over the chart: its keys would change what
+        // is behind it.
+        if !self.about.open && !self.errors.open && self.confirm_delete.is_none() {
             self.handle_keys(&ctx);
         }
         self.about.show(&ctx);
