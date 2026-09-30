@@ -839,6 +839,12 @@ impl eframe::App for App {
         }
         self.about.show(&ctx, &mut self.updates);
         self.errors.show(&ctx, self.elevated);
+        if std::mem::take(&mut self.errors.export) {
+            let list = self.errors.list().to_vec();
+            self.export_csv(frame, tr!("Access errors.csv", "Ошибки доступа.csv"), list.len(), |w, sep, _| {
+                crate::export::write_errors(w, &list, sep)
+            });
+        }
 
         egui::Panel::top("toolbar").show(root_ui, |ui| {
             ui.add_space(2.0);

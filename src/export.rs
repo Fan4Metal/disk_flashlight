@@ -6,6 +6,7 @@ use std::path::Path;
 
 use crate::format::date_time_at;
 use crate::model::Model;
+use crate::scan::walk::ScanError;
 
 /// Column names, in English so that scripts do not depend on the interface
 /// language.
@@ -70,6 +71,15 @@ pub fn write_tree(w: &mut (impl Write + ?Sized), model: &Model, rows: &[(u32, u1
     Ok(())
 }
 
+/// Write the folders a scan could not read, with the system's message.
+pub fn write_errors(w: &mut (impl Write + ?Sized), errors: &[ScanError], sep: char) -> io::Result<()> {
+    let mut csv = CsvWriter::new(w, sep, &["path", "error"])?;
+    for e in errors {
+        csv.row(&[&e.path, &e.message])?;
+    }
+    Ok(())
+}
+
 /// Create the file at `path` and `write` into it, with local times.
 pub fn save(path: &Path, write: impl FnOnce(&mut dyn Write, i64) -> io::Result<()>) -> io::Result<()> {
     let mut w = io::BufWriter::new(std::fs::File::create(path)?);
@@ -93,6 +103,18 @@ fn push_field(out: &mut String, text: &str, sep: char) {
 mod tests {
     use super::*;
     use crate::model::{RawDir, RawFile};
+
+    #[test]
+    fn writes_errors() {
+        let e = |path: &str, message: &str| ScanError { path: path.into(), message: message.into() };
+        let errors = [e(r"C:\Windows\CSC", "Access is denied. (os error 5)"), e(r"C:\a,b", "x")];
+        let mut out = Vec::new();
+        write_errors(&mut out, &errors, ',').unwrap();
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "\u{feff}path,error\r\nC:\\Windows\\CSC,Access is denied. (os error 5)\r\n\"C:\\a,b\",x\r\n"
+        );
+    }
 
     #[test]
     fn writes_quoted_rows() {

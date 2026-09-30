@@ -16,6 +16,8 @@ pub struct ErrorsView {
     count: u64,
     /// Sorted by path.
     list: Vec<ScanError>,
+    /// The export button was clicked: `App` saves [`Self::list`].
+    pub export: bool,
 }
 
 impl ErrorsView {
@@ -26,7 +28,13 @@ impl ErrorsView {
             open: false,
             count,
             list,
+            export: false,
         };
+    }
+
+    /// The unreadable folders kept, by path.
+    pub fn list(&self) -> &[ScanError] {
+        &self.list
     }
 
     /// Link in the status bar that opens the window, if there were errors.
@@ -99,6 +107,16 @@ impl ErrorsView {
                         ));
                     }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui
+                            .button(tr!("Export…", "Экспорт…"))
+                            .on_hover_text(tr!(
+                                "Save the list as a CSV file, which Excel opens",
+                                "Сохранить список в файл CSV, который открывается в Excel"
+                            ))
+                            .clicked()
+                        {
+                            self.export = true;
+                        }
                         if ui.button(tr!("Copy list", "Копировать список")).clicked() {
                             let text: String = self
                                 .list
