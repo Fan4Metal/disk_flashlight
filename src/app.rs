@@ -239,6 +239,43 @@ impl App {
         }
     }
 
+    /// Save `rows` rows as CSV where the user picks in the system's
+    /// dialog, offering `name`; `write` writes them. The outcome goes to
+    /// the status bar.
+    fn export_csv(
+        &mut self,
+        parent: &eframe::Frame,
+        name: &str,
+        rows: usize,
+        write: impl FnOnce(&mut dyn std::io::Write, char, i64) -> std::io::Result<()>,
+    ) {
+        let Some(path) = rfd::FileDialog::new()
+            .set_title(tr!("Save the list as CSV", "Сохранить список в CSV"))
+            .add_filter("CSV", &["csv"])
+            .set_file_name(name)
+            .set_parent(parent)
+            .save_file()
+        else {
+            return;
+        };
+        let file = path.display();
+        let sep = scan::win::list_separator();
+        self.status = match crate::export::save(&path, |w, offset| write(w, sep, offset)) {
+            Ok(()) => {
+                let rows = crate::i18n::count(rows as u64, ["row", "rows"], ["строка", "строки", "строк"]);
+                tr!(format!("Saved {file} ({rows})"), format!("Файл {file} сохранён ({rows})"))
+            }
+            Err(e) => tr!(format!("Cannot save {file}: {e}"), format!("Не удалось сохранить {file}: {e}")),
+        };
+    }
+
+    /// [`Self::export_csv`] for a list of files and folders.
+    fn export_items(&mut self, parent: &eframe::Frame, model: &Model, ids: &[u32], name: &str) {
+        self.export_csv(parent, name, ids.len(), |w, sep, offset| {
+            crate::export::write_items(w, model, ids, sep, offset)
+        });
+    }
+
     /// Show no scan result: the chart, the tree and the lists go.
     fn clear_model(&mut self) {
         self.model = None;
@@ -529,6 +566,10 @@ impl App {
     pub fn navigate(&mut self, id: u32) {
         if self.nav.navigate(id) {
             self.after_root_change();
+        } else if let Some(m) = &self.model {
+            // Already the centre (a file of it was clicked): the tree may
+            // have been collapsed meanwhile, so show the centre in it again.
+            self.tree.expand_to(m, id);
         }
     }
 
@@ -855,10 +896,11 @@ impl eframe::App for App {
 
         let mut tree_action = None;
         let mut search_for = None;
+        let min_side = crate::ui::files::min_panel_width(root_ui);
         egui::Panel::left("tree")
             .resizable(true)
-            .default_size(300.0)
-            .min_size(160.0)
+            .default_size(300.0_f32.max(min_side))
+            .min_size(min_side)
             .show(root_ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
                     ui.selectable_value(&mut self.side, SideView::Folders, tr!("Folders", "Папки"));
@@ -898,6 +940,20 @@ impl eframe::App for App {
                     }
                 });
             });
+        if std::mem::take(&mut self.tree.export) {
+            let rows = self.tree.rows().to_vec();
+            self.export_csv(frame, tr!("Folders.csv", "Папки.csv"), rows.len(), |w, sep, offset| {
+                crate::export::write_tree(w, &model, &rows, sep, offset)
+            });
+        }
+        if std::mem::take(&mut self.files.export) {
+            let ids = self.files.ids();
+            self.export_items(frame, &model, &ids, tr!("Largest files.csv", "Крупные файлы.csv"));
+        }
+        if std::mem::take(&mut self.search.export) {
+            let ids = self.search.all_ids(&model);
+            self.export_items(frame, &model, &ids, tr!("Search results.csv", "Результаты поиска.csv"));
+        }
         // A double click on a type lists its files in the Search tab.
         if let Some(query) = search_for {
             self.search.query = query;

@@ -3,6 +3,7 @@
 #[macro_use]
 mod i18n;
 mod app;
+mod export;
 mod format;
 mod history;
 mod icon;
@@ -19,6 +20,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
+use anyhow::Context;
 use format::{human_size, thousands};
 
 /// Version from Cargo.toml, shared by the About window, `--version`, the
@@ -51,7 +53,7 @@ fn main() -> anyhow::Result<()> {
     env_logger::init();
     let cli_mode = std::env::args()
         .skip(1)
-        .any(|a| matches!(a.as_str(), "--bench" | "--version" | "-V" | "-h" | "--help"));
+        .any(|a| matches!(a.as_str(), "--bench" | "--export" | "--version" | "-V" | "-h" | "--help"));
     #[cfg(windows)]
     if cli_mode {
         attach_parent_console();
@@ -61,11 +63,48 @@ fn main() -> anyhow::Result<()> {
     let mut bench_path: Option<PathBuf> = None;
     let mut allow_mft = true;
     let mut want_mft = false;
+    let mut export_path: Option<PathBuf> = None;
+    let mut ex = ExportArgs::default();
     while let Some(a) = args.next() {
+        let mut value = |what: &str| args.next().ok_or_else(|| anyhow::anyhow!("{what} needs a value"));
         match a.as_str() {
             "--bench" => {
-                bench_path = Some(normalize(&args.next().unwrap_or_else(|| "C:".into())));
+                bench_path = Some(normalize(&value("--bench").unwrap_or_else(|_| "C:".into())));
             }
+            "--export" => export_path = Some(normalize(&value("--export")?)),
+            "--out" => ex.out = Some(value("--out")?),
+            "--largest" => ex.largest = Some(value("--largest")?.parse().context("--largest takes a number")?),
+            "--search" => ex.search = Some(value("--search")?),
+            "--sep" => {
+                let s = value("--sep")?;
+                let mut chars = s.chars();
+                ex.sep = match (s.as_str(), chars.next(), chars.next()) {
+                    ("tab", _, _) => '\t',
+                    (_, Some(c), None) if c != '"' => c,
+                    _ => anyhow::bail!("--sep takes one character (or tab)"),
+                };
+            }
+            "--kind" => {
+                ex.kind = match value("--kind")?.as_str() {
+                    "all" => model::ItemKind::All,
+                    "files" => model::ItemKind::Files,
+                    "folders" => model::ItemKind::Folders,
+                    k => anyhow::bail!("--kind takes all, files or folders, not {k}"),
+                };
+            }
+            "--whole-word" => ex.whole_word = true,
+            "--older-than" => {
+                ex.older_than = value("--older-than")?.parse().context("--older-than takes a number of years")?;
+            }
+            "--sort" => {
+                ex.sort = match value("--sort")?.as_str() {
+                    "size" => ui::files::ListSort::Size,
+                    "oldest" => ui::files::ListSort::Oldest,
+                    "newest" => ui::files::ListSort::Newest,
+                    s => anyhow::bail!("--sort takes size, oldest or newest, not {s}"),
+                };
+            }
+            "--logical" => ex.metric = model::Metric::Logical,
             "--walk" => allow_mft = false,
             "--mft" => want_mft = true,
             "--export-icon" => {
@@ -80,9 +119,21 @@ fn main() -> anyhow::Result<()> {
             }
             "-h" | "--help" => {
                 println!("Disk Flashlight {VERSION}");
-                println!("disk_flashlight [--mft] [PATH] | --bench PATH [--walk] | --export-icon FILE | --version");
+                println!("disk_flashlight [--mft] [PATH] | --bench PATH [--walk] | --export PATH [options]");
+                println!("                | --export-icon FILE | --version");
                 println!("  --mft   restart as administrator (UAC prompt) so that a whole NTFS drive");
                 println!("          is scanned through the MFT; ignored where it would not help");
+                println!("  --export PATH   scan PATH and write a list as CSV (UTF-8 with BOM):");
+                println!("    --largest N        the N largest files (the default, 100)");
+                println!("    --older-than Y     with --largest: only files not changed for Y years");
+                println!("    --search QUERY     all matches of QUERY, as in the Search tab");
+                println!("    --kind K           with --search: all, files or folders");
+                println!("    --whole-word       with --search: match whole words only");
+                println!("    --sort S           size (default), oldest or newest");
+                println!("    --logical          sizes by length, not by space on disk");
+                println!("    --sep C            field separator: one character or tab (default ,)");
+                println!("    --out FILE         write to FILE instead of the console (- for stdout)");
+                println!("    --walk             do not use the MFT scanner");
                 return Ok(());
             }
             other => initial = Some(normalize(other)),
@@ -90,6 +141,9 @@ fn main() -> anyhow::Result<()> {
     }
     if let Some(p) = bench_path {
         return bench(p, allow_mft);
+    }
+    if let Some(p) = export_path {
+        return export(p, ex, allow_mft);
     }
     if want_mft && elevate_for_mft(initial.as_deref()) {
         return Ok(()); // the elevated copy takes over
@@ -235,6 +289,86 @@ pub fn normalize(arg: &str) -> PathBuf {
     } else {
         PathBuf::from(arg)
     }
+}
+
+/// Options of `--export`.
+struct ExportArgs {
+    out: Option<String>,
+    largest: Option<usize>,
+    search: Option<String>,
+    sep: char,
+    kind: model::ItemKind,
+    whole_word: bool,
+    older_than: u32,
+    sort: ui::files::ListSort,
+    metric: model::Metric,
+}
+
+impl Default for ExportArgs {
+    fn default() -> Self {
+        Self {
+            out: None,
+            largest: None,
+            search: None,
+            sep: ',',
+            kind: model::ItemKind::All,
+            whole_word: false,
+            older_than: 0,
+            sort: ui::files::ListSort::Size,
+            metric: model::Metric::Physical,
+        }
+    }
+}
+
+/// `--export PATH`: scan, pick the largest files or the matches of a
+/// search as the tabs do, and write them as CSV; a summary goes to stderr.
+fn export(path: PathBuf, ex: ExportArgs, allow_mft: bool) -> anyhow::Result<()> {
+    if ex.largest.is_some() && ex.search.is_some() {
+        anyhow::bail!("--largest and --search cannot be combined");
+    }
+    if ex.search.is_some() && ex.older_than > 0 {
+        anyhow::bail!("--older-than goes with --largest, not --search");
+    }
+    let progress = scan::Progress::default();
+    let t = Instant::now();
+    let (model, info) = scan::scan(&path, &progress, allow_mft)?;
+    let scan_time = t.elapsed();
+    let metric = ex.metric;
+    let mut ids = match ex.search.as_deref().map(str::trim) {
+        Some(query) => {
+            // Every match: the first pass counts them.
+            let count = model.search(0, query, metric, 1, ex.whole_word, ex.kind).count;
+            model.search(0, query, metric, count.max(1), ex.whole_word, ex.kind).ids
+        }
+        None => {
+            let before = (ex.older_than > 0)
+                .then(|| model.scanned_at.saturating_sub(ex.older_than.saturating_mul(ui::files::YEAR_SECS)));
+            model.largest_files(0, metric, ex.largest.unwrap_or(100), before)
+        }
+    };
+    ex.sort.apply(&model, metric, &mut ids, |&i| i);
+    match ex.out.as_deref() {
+        Some(file) if file != "-" => {
+            export::save(std::path::Path::new(file), |w, offset| {
+                export::write_items(w, &model, &ids, ex.sep, offset)
+            })
+            .with_context(|| format!("writing {file}"))?
+        }
+        _ => {
+            use std::io::Write;
+            let mut w = std::io::BufWriter::new(std::io::stdout().lock());
+            export::write_items(&mut w, &model, &ids, ex.sep, format::local_offset())?;
+            w.flush()?;
+        }
+    }
+    eprintln!(
+        "{} rows from {} ({:?}, scanned in {:.1}s)",
+        thousands(ids.len() as u64),
+        model.root_path,
+        info.method,
+        scan_time.as_secs_f64()
+    );
+    Ok(())
 }
 
 /// `--bench PATH`: scan, pack, lay out and tessellate, printing timings.

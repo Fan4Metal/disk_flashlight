@@ -12,12 +12,15 @@ use egui::{
 use crate::format::human_size;
 use crate::i18n::count;
 use crate::model::{ItemKind, Metric, Model, match_ranges};
-use crate::ui::files::{ListSort, ROW_HEIGHT, folder_under, item_row, sort_combo};
+use crate::ui::files::{ListSort, ROW_HEIGHT, export_button, folder_under, item_row, sort_combo};
 use crate::ui::item_menu;
 use crate::ui::tree::TreeAction;
 
 /// Number of matches listed (the largest ones).
 const LIMIT: usize = 200;
+/// Panel width from which the summary shares a row with the order and
+/// Export, in points.
+const WIDE_HEADER: f32 = 380.0;
 
 #[derive(Default)]
 pub struct SearchView {
@@ -45,6 +48,8 @@ pub struct SearchView {
     /// relative to the scan root and the parts of its name that match.
     rows: Vec<(u32, String, Vec<Range<usize>>)>,
     selected: Option<u32>,
+    /// The export button was clicked: `App` saves [`Self::all_ids`].
+    pub export: bool,
 }
 
 impl SearchView {
@@ -65,6 +70,16 @@ impl SearchView {
     /// there are any.
     pub fn highlight(&self) -> Option<(u64, &[u64])> {
         (self.count > 0 && !self.query.trim().is_empty()).then_some((self.generation, &self.hits[..]))
+    }
+
+    /// Every match, not only the listed largest ones, in the list's order.
+    pub fn all_ids(&self, model: &Model) -> Vec<u32> {
+        let Some((query, metric, whole_word, kind)) = &self.key else {
+            return Vec::new();
+        };
+        let mut ids = model.search(0, query.trim(), *metric, self.count.max(1), *whole_word, *kind).ids;
+        self.sort.apply(model, *metric, &mut ids, |&i| i);
+        ids
     }
 
     /// A click on a folder navigates to it, on a file to its folder.
@@ -175,22 +190,35 @@ impl SearchView {
         } else {
             summary
         };
-        ui.horizontal(|ui| {
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                sort_combo(ui, "search_sort", &mut self.sort);
-                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                    ui.add(egui::Label::new(RichText::new(&summary).weak()).truncate())
-                        .on_hover_text(tr!(
-                            format!(
-                                "{summary}\nTotal size of the matches; files inside a matching folder count once"
-                            ),
-                            format!(
-                                "{summary}\nОбщий размер совпадений; файлы внутри совпавшей папки учитываются один раз"
-                            )
-                        ));
+        let tip = tr!(
+            format!("Save all matches, not only the {LIMIT} listed, as a CSV file, which Excel opens"),
+            format!("Сохранить все совпадения, а не только {LIMIT} показанных, в файл CSV, который открывается в Excel")
+        );
+        let summary_label = |ui: &mut Ui| {
+            ui.add(egui::Label::new(RichText::new(&summary).weak()).truncate())
+                .on_hover_text(tr!(
+                    format!("{summary}\nTotal size of the matches; files inside a matching folder count once"),
+                    format!("{summary}\nОбщий размер совпадений; файлы внутри совпавшей папки учитываются один раз")
+                ));
+        };
+        if ui.available_width() >= WIDE_HEADER {
+            // The summary, then the order and Export at the right end.
+            ui.horizontal(|ui| {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    self.export |= export_button(ui, self.count > 0, &tip).clicked();
+                    sort_combo(ui, "search_sort", &mut self.sort);
+                    ui.with_layout(Layout::left_to_right(Align::Center), summary_label);
                 });
             });
-        });
+        } else {
+            // A narrow panel: the summary on a line of its own, and the
+            // controls wrapping rather than widening the panel.
+            summary_label(ui);
+            ui.horizontal_wrapped(|ui| {
+                sort_combo(ui, "search_sort", &mut self.sort);
+                self.export |= export_button(ui, self.count > 0, &tip).clicked();
+            });
+        }
         if self.sorted_by != Some(self.sort) {
             self.sort.apply(model, metric, &mut self.rows, |r| r.0);
             self.sorted_by = Some(self.sort);

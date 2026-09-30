@@ -74,6 +74,8 @@ pub struct TreeView {
     /// How much wider than the list its rows were in the last frame.
     #[cfg(test)]
     overflow: f32,
+    /// The export button was clicked: `App` saves [`Self::rows`].
+    pub export: bool,
 }
 
 impl Default for TreeView {
@@ -91,6 +93,7 @@ impl Default for TreeView {
             viewport: (0.0, 0.0),
             #[cfg(test)]
             overflow: 0.0,
+            export: false,
         };
         t.expanded.insert(0);
         t
@@ -120,6 +123,30 @@ impl TreeView {
         self.peek_target = None;
         self.dirty = true;
         self.scroll_to = Some(id);
+    }
+
+    /// Expand `id` and its ancestors, keeping everything else as it is, and
+    /// scroll to it.
+    pub fn expand_to(&mut self, model: &Model, id: u32) {
+        let mut cur = id;
+        while cur != NO_NODE {
+            self.expanded.insert(cur);
+            cur = model.node(cur).parent;
+        }
+        self.dirty = true;
+        self.scroll_to = Some(id);
+    }
+
+    /// Collapse everything but the scan root, the peek included (the next
+    /// folder hovered in the chart is peeked at again), and scroll to the
+    /// top.
+    fn collapse_all(&mut self) {
+        self.expanded.clear();
+        self.expanded.insert(0);
+        self.peek.clear();
+        self.peek_target = None;
+        self.dirty = true;
+        self.scroll_to = Some(0);
     }
 
     /// Temporarily expand the ancestors of `id` (replacing the previous
@@ -157,6 +184,12 @@ impl TreeView {
             self.dirty = true;
             self.ensure_visible = Some(current_root);
         }
+    }
+
+    /// The rows shown, `(folder, depth)`: what is expanded, the folders
+    /// peeked at from the chart included.
+    pub fn rows(&self) -> &[(u32, u16)] {
+        &self.rows
     }
 
     fn is_expanded(&self, id: u32) -> bool {
@@ -209,6 +242,27 @@ impl TreeView {
         if self.dirty || self.sorted_by != Some(metric) {
             self.rebuild(model, metric);
         }
+        // Collapse all on the left of a row of its own, Export at its right end.
+        ui.horizontal(|ui| {
+            let can_collapse = self.expanded.len() > 1 || !self.peek.is_empty();
+            if ui
+                .add_enabled(can_collapse, egui::Button::new(tr!("Collapse all", "Свернуть все")))
+                .on_hover_text(tr!(
+                    "Collapse every folder but the scanned one",
+                    "Свернуть все папки, кроме просканированной"
+                ))
+                .clicked()
+            {
+                self.collapse_all();
+            }
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let tip = tr!(
+                    "Save the folders shown, as far as they are expanded, as a CSV file, which Excel opens",
+                    "Сохранить показанные папки, насколько они развёрнуты, в файл CSV, который открывается в Excel"
+                );
+                self.export |= super::files::export_button(ui, !self.rows.is_empty(), tip).clicked();
+            });
+        });
         let mut action = TreeAction::default();
         let mut toggled: Option<u32> = None;
         // show_rows places rows one row height plus item spacing apart.
@@ -345,6 +399,20 @@ mod tests {
         // Up to a: a1 collapses again.
         t.reveal(&m, id(&["a"]));
         assert_eq!(rows(&mut t, &m), ["root", "a", "a1", "a2", "b"]);
+
+        // Collapse all leaves the root's folders, peek included.
+        t.expanded.insert(id(&["b"]));
+        t.follow(&m, 0, Some(id(&["a", "a1", "deep"])), true);
+        t.collapse_all();
+        assert_eq!(rows(&mut t, &m), ["root", "a", "b"]);
+        // The same folder hovered again is peeked at again.
+        t.follow(&m, 0, Some(id(&["a", "a1", "deep"])), true);
+        assert_eq!(rows(&mut t, &m), ["root", "a", "a1", "deep", "a2", "b"]);
+        // Showing a folder expands its path and keeps the rest.
+        t.collapse_all();
+        t.expanded.insert(id(&["b"]));
+        t.expand_to(&m, id(&["a", "a1"]));
+        assert_eq!(rows(&mut t, &m), ["root", "a", "a1", "deep", "a2", "b", "b1"]);
     }
 
     /// In a side panel like the app's, at the usual display scales and at

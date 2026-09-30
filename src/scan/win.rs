@@ -465,6 +465,20 @@ pub fn relaunch_elevated(args: &str) -> bool {
     h as isize > 32
 }
 
+/// The user's list separator (Region settings), which Excel splits CSV
+/// files on: `;` where the decimal separator is a comma. `,` if it is not
+/// a single character.
+pub fn list_separator() -> char {
+    use windows_sys::Win32::Globalization::{GetLocaleInfoEx, LOCALE_SLIST};
+    let mut buf = [0u16; 8];
+    let n = unsafe { GetLocaleInfoEx(std::ptr::null(), LOCALE_SLIST, buf.as_mut_ptr(), buf.len() as i32) };
+    // `n` counts the terminating NUL.
+    match char::decode_utf16(buf[..(n.max(1) - 1) as usize].iter().copied()).collect::<Result<Vec<_>, _>>() {
+        Ok(chars) if chars.len() == 1 && !chars[0].is_whitespace() && chars[0] != '"' => chars[0],
+        _ => ',',
+    }
+}
+
 /// HTTPS GET of `path` on `host` through WinHTTP, which brings the system's
 /// TLS and proxy settings; `headers` are extra request lines joined with
 /// `\r\n`. Returns the status code and the body, refused past `limit`

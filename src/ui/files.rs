@@ -20,7 +20,7 @@ const DATE_WIDTH: f32 = 72.0;
 /// Choices of the age filter, in years (0 = any age).
 const AGE_CHOICES: [u32; 5] = [0, 1, 2, 5, 10];
 /// Average length of a year, in seconds.
-const YEAR_SECS: u32 = 31_557_600;
+pub const YEAR_SECS: u32 = 31_557_600;
 
 /// Order of the rows of a list.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -47,7 +47,7 @@ impl ListSort {
     /// Sort `rows`, whose item ids `id` gives. Equal keys fall back to the
     /// size, then to the id, so the order is the same on every run; by size
     /// it is the order the lists are built in.
-    pub(super) fn apply<T>(self, model: &Model, metric: Metric, rows: &mut [T], id: impl Fn(&T) -> u32) {
+    pub fn apply<T>(self, model: &Model, metric: Metric, rows: &mut [T], id: impl Fn(&T) -> u32) {
         let size = |i: u32| Reverse(model.node(i).metric(metric));
         match self {
             ListSort::Size => rows.sort_by_key(|r| {
@@ -83,6 +83,28 @@ pub(super) fn sort_combo(ui: &mut Ui, salt: &str, sort: &mut ListSort) {
         ));
 }
 
+/// Smallest width of the left panel, in points: its widest row that cannot
+/// wrap, the two lists of this tab with their longest labels side by side,
+/// plus the panel's margins. Narrower, egui would widen the panel's content
+/// past its background.
+pub fn min_panel_width(ui: &Ui) -> f32 {
+    let spacing = ui.spacing();
+    let text = |s: &str| {
+        egui::WidgetText::from(s)
+            .into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Button)
+            .size()
+            .x
+    };
+    let combo = |labels: &mut dyn Iterator<Item = String>| {
+        let widest = labels.map(|l| text(&l)).fold(0.0, f32::max);
+        widest + spacing.icon_spacing + spacing.icon_width + 2.0 * spacing.button_padding.x
+    };
+    let sort = combo(&mut ListSort::ALL.iter().map(|s| s.label().to_string()));
+    let age = combo(&mut AGE_CHOICES.iter().map(|&y| age_label(y)));
+    // Margins of the panel's frame, and a little slack.
+    sort + spacing.item_spacing.x + age + 2.0 * 8.0 + 4.0
+}
+
 fn age_label(years: u32) -> String {
     match years {
         0 => tr!("Any age", "Любой возраст").into(),
@@ -106,6 +128,8 @@ pub struct FilesView {
     /// folder (it is still in the list there).
     selected: Option<u32>,
     scroll_to_selected: bool,
+    /// The export button was clicked: `App` saves [`Self::ids`].
+    pub export: bool,
 }
 
 impl FilesView {
@@ -118,6 +142,11 @@ impl FilesView {
         };
     }
 
+    /// The listed files, in the list's order.
+    pub fn ids(&self) -> Vec<u32> {
+        self.rows.iter().map(|r| r.0).collect()
+    }
+
     /// A click selects the file and asks to navigate to its folder.
     pub fn show(
         &mut self,
@@ -127,7 +156,8 @@ impl FilesView {
         metric: Metric,
         chart_hovered: Option<u32>,
     ) -> TreeAction {
-        ui.horizontal(|ui| {
+        // Wraps in a narrow panel rather than widening it.
+        ui.horizontal_wrapped(|ui| {
             sort_combo(ui, "files_sort", &mut self.sort);
             egui::ComboBox::from_id_salt("files_age")
                 .selected_text(age_label(self.older_than))
@@ -141,6 +171,11 @@ impl FilesView {
                     "List only files not modified for this long before the scan",
                     "Показывать только файлы, не изменявшиеся столько времени до сканирования"
                 ));
+            let tip = tr!(
+                "Save the list as a CSV file, which Excel opens",
+                "Сохранить список в файл CSV, который открывается в Excel"
+            );
+            self.export |= export_button(ui, !self.rows.is_empty(), tip).clicked();
         });
 
         let key = (root, metric, self.older_than, self.sort);
@@ -199,6 +234,32 @@ impl FilesView {
         });
         action
     }
+}
+
+/// Button that saves a list as CSV, explained by `tip`, at the right end of
+/// the wrapping row above the list; it goes to a line of its own when the
+/// panel is too narrow for the row.
+pub(super) fn export_button(ui: &mut Ui, enabled: bool, tip: &str) -> egui::Response {
+    let text = tr!("Export…", "Экспорт…");
+    let galley = egui::WidgetText::from(text).into_galley(
+        ui,
+        Some(egui::TextWrapMode::Extend),
+        f32::INFINITY,
+        egui::TextStyle::Button,
+    );
+    let width = galley.size().x + 2.0 * ui.spacing().button_padding.x;
+    // A right-to-left row puts it at the right end by itself.
+    if ui.layout().main_dir() == egui::Direction::LeftToRight {
+        let room = |ui: &Ui| ui.available_size_before_wrap().x - width - ui.spacing().item_spacing.x;
+        if room(ui) < 0.0 && ui.layout().main_wrap() {
+            ui.end_row();
+        }
+        let room = room(ui);
+        if room > 0.0 {
+            ui.add_space(room);
+        }
+    }
+    ui.add_enabled(enabled, egui::Button::new(text)).on_hover_text(tip)
 }
 
 /// Background of the parts of a name that a search matched, on the light

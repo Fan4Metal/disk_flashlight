@@ -78,9 +78,26 @@ pub fn date(t: u32) -> String {
     if t == 0 {
         return "\u{2014}".into();
     }
+    date_in(lang(), (t as i64 + local_offset()).div_euclid(86_400))
+}
+
+/// Seconds to add to UTC for local time, asked once per run.
+pub fn local_offset() -> i64 {
     static OFFSET: std::sync::OnceLock<i64> = std::sync::OnceLock::new();
-    let offset = *OFFSET.get_or_init(crate::scan::win::utc_offset);
-    date_in(lang(), (t as i64 + offset).div_euclid(86_400))
+    *OFFSET.get_or_init(crate::scan::win::utc_offset)
+}
+
+/// Unix seconds `t` shifted by `offset` as `2024-03-15 14:02:11`, the form
+/// spreadsheets read as a date and time in any language; empty for 0
+/// (unknown).
+pub fn date_time_at(t: u32, offset: i64) -> String {
+    if t == 0 {
+        return String::new();
+    }
+    let local = t as i64 + offset;
+    let (y, m, d) = civil_date(local.div_euclid(86_400));
+    let secs = local.rem_euclid(86_400);
+    format!("{y:04}-{m:02}-{d:02} {:02}:{:02}:{:02}", secs / 3600, secs / 60 % 60, secs % 60)
 }
 
 /// The local day `day` (days since 1970-01-01) as a date in `lang`.
@@ -138,6 +155,15 @@ fn civil_date(days: i64) -> (i64, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dates_with_time() {
+        assert_eq!(date_time_at(0, 0), "");
+        // 2024-03-15 14:02:11 UTC.
+        assert_eq!(date_time_at(1_710_511_331, 0), "2024-03-15 14:02:11");
+        assert_eq!(date_time_at(1_710_511_331, 3 * 3600), "2024-03-15 17:02:11");
+        assert_eq!(date_time_at(1_710_511_331, -15 * 3600), "2024-03-14 23:02:11");
+    }
 
     #[test]
     fn percents() {
