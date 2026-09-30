@@ -10,7 +10,7 @@ use egui::{
 
 use crate::format::{ago, date, human_size, percent, thousands};
 use crate::i18n::{count, ru_plural};
-use crate::layout::{self, Layout, LayoutParams, Sector};
+use crate::layout::{self, Layout, LayoutParams, Sector, Step};
 use crate::model::{Metric, Model, Node};
 use crate::render::{self, ColorMode, Palette};
 use crate::scan::win::DiskSpace;
@@ -57,6 +57,14 @@ pub struct ChartView {
     pub hovered: Option<u32>,
     /// Whether the pointer was over the chart during the last frame.
     pub pointer_inside: bool,
+    /// The chart is driven by the keyboard: `selected` stands in for the
+    /// item under the mouse until the mouse moves.
+    keyboard: bool,
+    /// Item chosen with the keyboard; `None` is the centre.
+    selected: Option<u32>,
+    /// Select the largest item once the next layout is built (after
+    /// entering a folder from the keyboard).
+    select_first: bool,
     /// Node whose context menu is open (right-clicked sector or the root).
     menu_node: Option<u32>,
     /// Root the current zoom/pan belongs to; a new root resets the view.
@@ -75,6 +83,9 @@ impl Default for ChartView {
             pan: Vec2::ZERO,
             hovered: None,
             pointer_inside: false,
+            keyboard: false,
+            selected: None,
+            select_first: false,
             menu_node: None,
             view_root: None,
             layout: None,
@@ -93,6 +104,32 @@ impl ChartView {
         self.menu_node = None;
         // Ids of the old model; the next frame sets it again.
         self.hovered = None;
+        self.keyboard = false;
+        self.selected = None;
+    }
+
+    /// Move the keyboard selection; the first move starts from the item
+    /// under the mouse.
+    pub fn step(&mut self, model: &Model, step: Step) {
+        let Some(layout) = &self.layout else { return };
+        let from = if self.keyboard { self.selected } else { self.hovered };
+        self.selected = layout.step(model, from, step);
+        self.keyboard = true;
+    }
+
+    /// Select `id` from the keyboard (`None`: the largest item) once the
+    /// chart shows the new centre.
+    pub fn select(&mut self, id: Option<u32>) {
+        self.keyboard = true;
+        self.selected = id;
+        self.select_first = id.is_none();
+    }
+
+    /// Back to following the mouse.
+    pub fn clear_selection(&mut self) {
+        self.keyboard = false;
+        self.selected = None;
+        self.select_first = false;
     }
 
     pub fn reset_view(&mut self) {
@@ -198,6 +235,15 @@ impl ChartView {
         }
         let layout = self.layout.as_ref().expect("layout built above");
         let mesh = self.mesh.as_ref().expect("mesh built above");
+        // The mouse takes over from the keyboard as soon as it moves.
+        if self.keyboard && ui.input(|i| i.pointer.delta() != Vec2::ZERO || i.pointer.any_pressed()) {
+            self.keyboard = false;
+            self.selected = None;
+            self.select_first = false;
+        }
+        if std::mem::take(&mut self.select_first) {
+            self.selected = layout.step(model, None, Step::Next);
+        }
 
         // Background and guide rings.
         let painter = painter.with_clip_rect(rect);
@@ -254,7 +300,14 @@ impl ChartView {
         // tooltip is hidden, so the highlight shows what the menu acts on.
         let hit = match self.menu_node {
             Some(n) => layout.index.get(&n).copied(),
+            None if self.keyboard => self.selected.and_then(|n| layout.index.get(&n).copied()),
             None => pointer.and_then(|p| layout.hit_test(p)),
+        };
+        // The tooltip of a keyboard selection opens at the sector's middle.
+        let tip_at = if self.keyboard {
+            hit.map(|(ring, i)| layout.sector_middle(ring, i))
+        } else {
+            pointer
         };
         let hit_sector: Option<Sector> = hit.map(|(ring, i)| layout.rings[ring][i]);
         self.pointer_inside = response.contains_pointer();
@@ -338,7 +391,7 @@ impl ChartView {
         // anchored to a box covering the arrow cursor rather than to the
         // pointer itself, so it opens below the arrow instead of under it;
         // near screen edges egui flips it to the other side of that box.
-        if let (None, Some(s), Some(p)) = (self.menu_node, hit_sector, pointer) {
+        if let (None, Some(s), Some(p)) = (self.menu_node, hit_sector, tip_at) {
             let cursor_box = egui::Rect::from_min_size(p, CURSOR_SIZE);
             egui::Tooltip::always_open(
                 ui.ctx().clone(),

@@ -267,6 +267,68 @@ impl Layout {
     pub fn is_center(&self, p: Pos2) -> bool {
         (p - self.center).length() < self.center_radius()
     }
+
+    /// Middle of the sector at `(ring, i)` on screen.
+    pub fn sector_middle(&self, ring: usize, i: usize) -> Pos2 {
+        let s = &self.rings[ring][i];
+        let (r_in, r_out) = self.sector_radii(ring, s);
+        let (a, r) = ((s.a0 + s.a1) * 0.5, (r_in + r_out) * 0.5);
+        self.center + egui::vec2(a.sin(), -a.cos()) * r
+    }
+
+    /// The single item a keyboard `step` from `from` leads to, among the
+    /// laid-out sectors (groups and free space are passed over); `None` is
+    /// the centre. Without a start, or one not laid out, a step lands on
+    /// the root's largest item (the last one for `Prev`).
+    pub fn step(&self, model: &Model, from: Option<u32>, step: Step) -> Option<u32> {
+        let ring0 = self.rings.first()?;
+        let items = |ring: &[Sector]| ring.iter().filter(|s| s.is_item()).map(|s| s.node).collect::<Vec<_>>();
+        let Some(&(ring, i)) = from.and_then(|id| self.index.get(&id)) else {
+            return match step {
+                Step::In => None,
+                Step::Prev => items(ring0).last().copied(),
+                Step::Next | Step::Out => items(ring0).first().copied(),
+            };
+        };
+        let here = self.rings[ring][i].node;
+        match step {
+            Step::Next | Step::Prev => {
+                let sectors = &self.rings[ring];
+                let n = sectors.len();
+                (1..n)
+                    .map(|k| if step == Step::Next { (i + k) % n } else { (i + n - k) % n })
+                    .map(|j| &sectors[j])
+                    .find(|s| s.is_item())
+                    .map_or(Some(here), |s| Some(s.node))
+            }
+            // Children come largest first, clockwise from their parent's start.
+            Step::Out => Some(
+                self.rings
+                    .get(ring + 1)
+                    .and_then(|outer| {
+                        outer.iter().find(|s| s.is_item() && model.node(s.node).parent == here)
+                    })
+                    .map_or(here, |s| s.node),
+            ),
+            Step::In => {
+                let parent = model.node(here).parent;
+                self.index.contains_key(&parent).then_some(parent)
+            }
+        }
+    }
+}
+
+/// A keyboard move in the chart.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Step {
+    /// The next sector clockwise in the same ring.
+    Next,
+    /// The previous one.
+    Prev,
+    /// The largest child, one ring further out.
+    Out,
+    /// The parent, one ring further in (the centre from the first ring).
+    In,
 }
 
 /// Lay out the subtree of `root` as a chart of `outer_radius` around
@@ -531,6 +593,37 @@ mod tests {
         let l = build(&m, 0, Metric::Logical, Pos2::ZERO, 400.0, everything(), &LayoutParams::default());
         let t = |i: usize| l.radii[i].1 - l.radii[i].0;
         assert!((t(1) / t(0) - 0.78).abs() < 1e-4);
+    }
+
+    #[test]
+    fn keyboard_steps() {
+        let dir = |name: &str, files| RawDir { name: name.into(), files, ..Default::default() };
+        let raw = RawDir {
+            name: "r".into(),
+            files: vec![f("x", 5)],
+            subdirs: vec![dir("big", vec![f("b1", 40), f("b2", 20)]), dir("small", vec![f("s1", 10)])],
+            ..Default::default()
+        };
+        let m = Model::from_raw(raw, "X:\\".into(), 1);
+        let l = build(&m, 0, Metric::Logical, Pos2::ZERO, 400.0, everything(), &LayoutParams::default());
+        let id = |name: &str| (0..m.len() as u32).find(|&i| m.name(i) == name).unwrap();
+        let step = |from: Option<&str>, s| l.step(&m, from.map(id), s).map(|n| m.name(n).to_string());
+        // Ring 0 clockwise: big (60), small (10), x (5).
+        assert_eq!(step(None, Step::Next).as_deref(), Some("big"));
+        assert_eq!(step(None, Step::Out).as_deref(), Some("big"));
+        assert_eq!(step(None, Step::Prev).as_deref(), Some("x"));
+        assert_eq!(step(None, Step::In), None);
+        assert_eq!(step(Some("big"), Step::Next).as_deref(), Some("small"));
+        assert_eq!(step(Some("x"), Step::Next).as_deref(), Some("big"));
+        assert_eq!(step(Some("big"), Step::Prev).as_deref(), Some("x"));
+        // Out to the largest child, and back in; the first ring leads to the centre.
+        assert_eq!(step(Some("big"), Step::Out).as_deref(), Some("b1"));
+        assert_eq!(step(Some("small"), Step::Out).as_deref(), Some("s1"));
+        assert_eq!(step(Some("b1"), Step::In).as_deref(), Some("big"));
+        assert_eq!(step(Some("big"), Step::In), None);
+        // A file has nothing further out; the ring goes on past its parent.
+        assert_eq!(step(Some("x"), Step::Out).as_deref(), Some("x"));
+        assert_eq!(step(Some("b2"), Step::Next).as_deref(), Some("s1"));
     }
 
     #[test]

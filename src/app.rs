@@ -677,10 +677,72 @@ impl App {
             self.go_forward();
         }
         if up {
+            // The folder left behind stays selected in the chart.
+            let from = self.nav.root;
             self.go_up();
+            if self.nav.root != from {
+                self.chart.select(Some(from));
+            }
         }
+        self.chart_keys(ctx);
         if rescan {
             self.rescan();
+        }
+    }
+
+    /// Keys acting on the chart: arrows move through sectors and rings,
+    /// Enter goes in, Delete and Ctrl+E act on the item under the mouse or
+    /// the keyboard selection, Esc hands the chart back to the mouse.
+    fn chart_keys(&mut self, ctx: &egui::Context) {
+        let Some(model) = self.model.clone() else { return };
+        let (step, enter, delete, explorer, escape) = ctx.input(|i| {
+            let plain = i.modifiers.is_none();
+            let step = [
+                (Key::ArrowRight, layout::Step::Next),
+                (Key::ArrowLeft, layout::Step::Prev),
+                (Key::ArrowDown, layout::Step::Out),
+                (Key::ArrowUp, layout::Step::In),
+            ]
+            .into_iter()
+            .find(|&(key, _)| plain && i.key_pressed(key))
+            .map(|(_, step)| step);
+            (
+                step,
+                plain && i.key_pressed(Key::Enter),
+                plain && i.key_pressed(Key::Delete),
+                i.modifiers.matches_exact(Modifiers::COMMAND) && i.key_pressed(Key::E),
+                i.key_pressed(Key::Escape),
+            )
+        });
+        if let Some(step) = step {
+            self.chart.step(&model, step);
+        }
+        if escape {
+            self.chart.clear_selection();
+        }
+        // In keyboard mode the chart's hovered item is the selection.
+        let target = self
+            .chart
+            .hovered
+            .or(self.tree_hovered)
+            .filter(|&id| (id as usize) < model.len());
+        if enter && let Some(id) = self.chart.hovered.filter(|&id| (id as usize) < model.len()) {
+            // As a click: a folder becomes the centre, a file takes the
+            // chart to its folder.
+            let n = model.node(id);
+            if n.is_dir {
+                self.navigate(id);
+                self.chart.select(None);
+            } else if n.parent != self.nav.root {
+                self.navigate(n.parent);
+                self.chart.select(Some(id));
+            }
+        }
+        if delete && let Some(id) = target {
+            self.run_command(ItemCommand::Delete(id), ctx);
+        }
+        if explorer {
+            self.run_command(ItemCommand::OpenInExplorer(target.unwrap_or(self.nav.root)), ctx);
         }
     }
 }
