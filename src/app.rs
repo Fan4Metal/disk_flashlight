@@ -72,7 +72,13 @@ pub struct App {
     shown_theme: Option<egui::Theme>,
     /// Repaint the window caption on this frame (see `follow_theme`).
     refresh_caption: bool,
+    /// Minimum window width last set from the toolbar (`fit_min_width`).
+    pub min_width: f32,
 }
+
+/// Smallest window size in points; the width grows to what the toolbar
+/// needs (`App::fit_min_width`).
+pub const MIN_WINDOW: [f32; 2] = [640.0, 420.0];
 
 /// Number of folders kept in [`App::recent`].
 pub const MAX_RECENT: usize = 8;
@@ -157,6 +163,7 @@ impl App {
             recent: settings.recent,
             shown_theme: None,
             refresh_caption: false,
+            min_width: MIN_WINDOW[0],
         };
         app.chart.palette.mode = settings.color_mode;
         app.chart.params.max_depth = settings.rings;

@@ -11,6 +11,9 @@ use crate::layout;
 use crate::model::Metric;
 use crate::render::ColorMode;
 
+/// Room kept in the toolbar for the path field and its Scan button.
+const PATH_ROOM: f32 = 240.0;
+
 impl App {
     pub fn toolbar(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
@@ -251,6 +254,10 @@ impl App {
                 ));
 
             ui.separator();
+            // What the controls on the left take, and the window around the
+            // row, for the window's minimum width.
+            let left_used = ui.min_rect().width();
+            let outside = ui.ctx().content_rect().width() - ui.max_rect().width();
 
             // About at the right end (after a newer version, if one was
             // found); the path takes the space left over.
@@ -276,11 +283,40 @@ impl App {
                     ui.ctx().set_theme(self.theme);
                 }
                 ui.separator();
+                let right_used = ui.max_rect().right() - ui.cursor().max.x;
+                self.fit_min_width(ui.ctx(), outside + left_used + right_used + PATH_ROOM);
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     self.path_field(ui);
                 });
             });
         });
+    }
+
+    /// Keep the window at least `width` points wide, so that the toolbar's
+    /// controls do not run over each other; what they need changes with the
+    /// language, Fast scan and the update button. A window already narrower
+    /// is widened, and nothing grows past the monitor.
+    fn fit_min_width(&mut self, ctx: &egui::Context, width: f32) {
+        let (monitor, inner, maximized) = ctx.input(|i| {
+            let v = i.viewport();
+            (v.monitor_size, v.inner_rect, v.maximized.unwrap_or(false))
+        });
+        let mut width = width.ceil().max(crate::app::MIN_WINDOW[0]);
+        if let Some(m) = monitor {
+            width = width.min(m.x);
+        }
+        if (width - self.min_width).abs() < 1.0 {
+            return;
+        }
+        self.min_width = width;
+        let min_height = crate::app::MIN_WINDOW[1];
+        ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(egui::vec2(width, min_height)));
+        if let Some(inner) = inner
+            && !maximized
+            && inner.width() < width
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(width, inner.height())));
+        }
     }
 
     /// The current path, or a path to type and scan (`ui::path_field`).

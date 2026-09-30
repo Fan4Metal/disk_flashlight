@@ -101,7 +101,8 @@ fn main() -> anyhow::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_title(format!("Disk Flashlight {VERSION}"))
             .with_inner_size([1200.0, 800.0])
-            .with_min_inner_size([640.0, 420.0])
+            // Widened to what the toolbar needs by `App::fit_min_width`.
+            .with_min_inner_size(app::MIN_WINDOW)
             .with_icon(egui::IconData {
                 rgba: icon::rgba(64),
                 width: 64,
