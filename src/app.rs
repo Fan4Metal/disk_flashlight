@@ -479,26 +479,31 @@ impl App {
             .or_else(|| self.drive.clone())
     }
 
-    /// Whether restarting elevated would switch to the MFT scanner: when the
-    /// target is on a local NTFS drive, or, with nothing chosen yet, when
-    /// there is such a drive to pick after the restart.
-    pub fn fast_scan_available(&self) -> bool {
-        let local_ntfs = |d: &scan::win::Drive| {
-            d.kind != scan::win::DriveKind::Remote && d.fs.eq_ignore_ascii_case("NTFS")
-        };
+    /// Whether the current target would go through the MFT scanner after an
+    /// elevated restart: it is on a local NTFS drive.
+    pub fn target_on_ntfs(&self) -> bool {
         let Some(target) = self.scan_target() else {
-            return self.drives.iter().any(local_ntfs);
+            return false;
         };
         let Some(letter) = scan::mft::drive_letter(std::path::Path::new(&target)) else {
             return false;
         };
-        self.drives.iter().any(|d| d.root.starts_with(letter) && local_ntfs(d))
+        self.drives.iter().any(|d| {
+            d.root.starts_with(letter)
+                && d.kind != scan::win::DriveKind::Remote
+                && d.fs.eq_ignore_ascii_case("NTFS")
+        })
     }
 
     /// Restart elevated (UAC prompt) so the MFT scanner can be used, keeping
-    /// the current scan target. Closes this window on success.
+    /// the current scan target unless it is on the network: an elevated
+    /// process does not see mapped drives, and a network path is walked
+    /// anyway. Closes this window on success.
     pub fn relaunch_as_admin(&mut self, ctx: &egui::Context) {
-        let target = self.scan_target().unwrap_or_default();
+        let target = self
+            .scan_target()
+            .filter(|t| !is_remote(&self.drives, std::path::Path::new(t)))
+            .unwrap_or_default();
         if scan::win::relaunch_elevated(&quote_arg(&target)) {
             if let Some(h) = &self.scan {
                 h.cancel();

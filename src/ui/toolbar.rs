@@ -104,7 +104,7 @@ impl App {
                 self.rescan();
             }
 
-            if !self.elevated && self.fast_scan_available() {
+            if !self.elevated {
                 let icon = ui.id().with("uac_shield");
                 let resp = egui::Button::new((
                     egui::Atom::custom(icon, egui::vec2(11.0, 13.0)),
@@ -114,7 +114,7 @@ impl App {
                 if let Some(rect) = resp.rect(icon) {
                     paint_uac_shield(ui.painter(), rect);
                 }
-                let hint = if self.scan_target().is_some() {
+                let hint = if self.target_on_ntfs() {
                     tr!(
                         "Restarts as administrator and scans the whole drive \
                          by reading the NTFS MFT directly",
@@ -123,10 +123,12 @@ impl App {
                     )
                 } else {
                     tr!(
-                        "Restarts as administrator, so that NTFS drives are scanned \
-                         by reading the MFT directly",
-                        "Перезапускает программу от имени администратора, чтобы диски \
-                         NTFS сканировались чтением MFT напрямую"
+                        "Restarts as administrator, so that local NTFS drives are \
+                         scanned by reading the MFT directly. Network drives and \
+                         other file systems are always walked folder by folder",
+                        "Перезапускает программу от имени администратора, чтобы локальные \
+                         диски NTFS сканировались чтением MFT напрямую. Сетевые диски и \
+                         другие файловые системы всегда обходятся по папкам"
                     )
                 };
                 if resp.response.clone().on_hover_text(hint).clicked()
