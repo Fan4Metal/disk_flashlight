@@ -471,7 +471,7 @@ impl App {
 
     /// Path being scanned or last scanned: a running scan wins over the
     /// loaded result, which wins over the drive picker.
-    fn scan_target(&self) -> Option<String> {
+    pub fn scan_target(&self) -> Option<String> {
         self.scan
             .as_ref()
             .map(|h| h.path.display().to_string())
@@ -480,17 +480,19 @@ impl App {
     }
 
     /// Whether restarting elevated would switch to the MFT scanner: when the
-    /// target is on a local NTFS drive.
+    /// target is on a local NTFS drive, or, with nothing chosen yet, when
+    /// there is such a drive to pick after the restart.
     pub fn fast_scan_available(&self) -> bool {
+        let local_ntfs = |d: &scan::win::Drive| {
+            d.kind != scan::win::DriveKind::Remote && d.fs.eq_ignore_ascii_case("NTFS")
+        };
         let Some(target) = self.scan_target() else {
-            return false;
+            return self.drives.iter().any(local_ntfs);
         };
         let Some(letter) = scan::mft::drive_letter(std::path::Path::new(&target)) else {
             return false;
         };
-        self.drives.iter().any(|d| {
-            d.root.starts_with(letter) && d.fs.eq_ignore_ascii_case("NTFS")
-        })
+        self.drives.iter().any(|d| d.root.starts_with(letter) && local_ntfs(d))
     }
 
     /// Restart elevated (UAC prompt) so the MFT scanner can be used, keeping

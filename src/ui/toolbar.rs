@@ -114,16 +114,22 @@ impl App {
                 if let Some(rect) = resp.rect(icon) {
                     paint_uac_shield(ui.painter(), rect);
                 }
-                if resp
-                    .response
-                    .clone()
-                    .on_hover_text(tr!(
+                let hint = if self.scan_target().is_some() {
+                    tr!(
                         "Restarts as administrator and scans the whole drive \
                          by reading the NTFS MFT directly",
                         "Перезапускает программу от имени администратора и сканирует \
                          весь диск, читая NTFS MFT напрямую"
-                    ))
-                    .clicked()
+                    )
+                } else {
+                    tr!(
+                        "Restarts as administrator, so that NTFS drives are scanned \
+                         by reading the MFT directly",
+                        "Перезапускает программу от имени администратора, чтобы диски \
+                         NTFS сканировались чтением MFT напрямую"
+                    )
+                };
+                if resp.response.clone().on_hover_text(hint).clicked()
                 {
                     self.relaunch_as_admin(ui.ctx());
                 }
