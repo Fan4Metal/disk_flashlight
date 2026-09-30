@@ -110,7 +110,7 @@ Setting the environment variable `RUST_LOG=disk_flashlight=debug` prints per-pha
 
 The `--mft` option requests administrator rights only where they speed up the scan: for a drive or folder on a local NTFS volume, or when no path is given. For another file system or a network path, and when the UAC prompt is declined, the program starts normally and walks the directories.
 
-The version is shown in the window title.
+The version is shown in the **About** window.
 
 Keyboard shortcuts: `Backspace` goes up, `Alt+Left` and `Alt+Right` move through history, `F5` rescans, `Ctrl+F` opens the search, `Ctrl+C` copies the path of the item under the mouse, `+` and `-` add or remove a ring, `F1` opens the **About** window (also available from the toolbar). A rescan keeps the current folder and the navigation history, and the previous results stay visible until it finishes; if the folder no longer exists, the view moves to its closest remaining parent. When another drive or folder is chosen, the previous results are cleared at once and a spinner with the scan progress is shown instead. The mouse wheel zooms the chart towards the cursor; dragging with the middle mouse button pans it, and a middle-button double click or the small button with the zoom factor in the top right corner of the chart (shown while zoomed or panned) restores the initial view.
 

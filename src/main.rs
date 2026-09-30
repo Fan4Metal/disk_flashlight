@@ -21,7 +21,7 @@ use std::time::Instant;
 
 use format::{human_size, thousands};
 
-/// Version from Cargo.toml, shared by the window title, `--version`, the
+/// Version from Cargo.toml, shared by the About window, `--version`, the
 /// installer and the GitHub release tag.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// eframe app id; also names the settings folder in `%APPDATA%` (unless the
@@ -99,7 +99,7 @@ fn main() -> anyhow::Result<()> {
     install_panic_hook(stored.file.as_ref().and_then(|f| f.parent()).map(|d| d.join(CRASH_LOG)));
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title(format!("Disk Flashlight {VERSION}"))
+            .with_title("Disk Flashlight")
             .with_inner_size([1200.0, 800.0])
             // Widened to what the toolbar needs by `App::fit_min_width`.
             .with_min_inner_size(app::MIN_WINDOW)
