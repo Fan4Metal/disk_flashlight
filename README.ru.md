@@ -35,6 +35,37 @@ Disk Flashlight — анализатор занятого места на дис
 
 Требования: стабильный toolchain Rust (MSVC) и Visual Studio Build Tools с компонентами C++.
 
+<details>
+<summary>Подготовка окружения</summary>
+
+Проект собирается на Windows 10 или 11 (x64). Использовалось следующее; приведённые команды устанавливают всё через `winget`:
+
+- **Visual Studio Build Tools 2022** с рабочей нагрузкой «Разработка классических приложений на C++» (`Microsoft.VisualStudio.Workload.VCTools`): компилятор и компоновщик MSVC v143 и Windows 11 SDK (10.0.26100). Компоновщик нужен Rust для цели MSVC, а `rc.exe` из SDK — сценарию сборки, который встраивает в исполняемый файл значок и сведения о версии (`winresource`). Build Tools устанавливаются без Visual Studio:
+
+  ```
+  winget install Microsoft.VisualStudio.2022.BuildTools --override "--wait --passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+  ```
+
+  Установщик `rustup-init.exe` при отсутствии Build Tools также предлагает их установить.
+
+- **Rust** через `rustup`, toolchain `stable-x86_64-pc-windows-msvc` (проверено на 1.98). Проект использует редакцию 2024 и цепочки `if let`, поэтому требуется Rust 1.88 или новее.
+
+  ```
+  winget install Rustlang.Rustup
+  rustup default stable-x86_64-pc-windows-msvc
+  ```
+
+- Только для установщика и выпуска: **Python 3** (проверено на 3.14; скрипт обходится стандартной библиотекой) и **Inno Setup 6**, чей `ISCC.exe` ищется в стандартных папках установки и в `PATH`.
+
+  ```
+  winget install Python.Python.3.14
+  winget install JRSoftware.InnoSetup
+  ```
+
+Остальные зависимости (egui, wgpu, windows-sys и другие) загружает `cargo` при первой сборке.
+
+</details>
+
 ```
 cargo build --release
 ```

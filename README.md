@@ -35,6 +35,37 @@ The project is written in Rust and uses [egui](https://github.com/emilk/egui) wi
 
 Requirements: a stable Rust toolchain (MSVC target) and the Visual Studio Build Tools with the C++ workload.
 
+<details>
+<summary>Setting up the environment</summary>
+
+The project builds on Windows 10 or 11 (x64). The following was used; the commands given install everything through `winget`:
+
+- **Visual Studio Build Tools 2022** with the "Desktop development with C++" workload (`Microsoft.VisualStudio.Workload.VCTools`): the MSVC v143 compiler and linker and the Windows 11 SDK (10.0.26100). Rust needs the linker for the MSVC target, and the build script, which embeds the icon and the version information into the executable (`winresource`), needs `rc.exe` from the SDK. The Build Tools are installed without Visual Studio itself:
+
+  ```
+  winget install Microsoft.VisualStudio.2022.BuildTools --override "--wait --passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+  ```
+
+  When the Build Tools are missing, `rustup-init.exe` also offers to install them.
+
+- **Rust** through `rustup`, with the `stable-x86_64-pc-windows-msvc` toolchain (tested with 1.98). The project uses the 2024 edition and `if let` chains, so Rust 1.88 or later is required.
+
+  ```
+  winget install Rustlang.Rustup
+  rustup default stable-x86_64-pc-windows-msvc
+  ```
+
+- For the installer and releases only: **Python 3** (tested with 3.14; the script needs nothing beyond the standard library) and **Inno Setup 6**, whose `ISCC.exe` is looked for in the standard installation folders and on `PATH`.
+
+  ```
+  winget install Python.Python.3.14
+  winget install JRSoftware.InnoSetup
+  ```
+
+The other dependencies (egui, wgpu, windows-sys and the rest) are downloaded by `cargo` on the first build.
+
+</details>
+
 ```
 cargo build --release
 ```
