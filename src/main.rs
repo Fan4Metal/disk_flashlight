@@ -13,6 +13,7 @@ mod scan;
 mod settings;
 mod types;
 mod ui;
+mod update;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};

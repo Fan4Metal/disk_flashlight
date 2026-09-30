@@ -27,6 +27,8 @@ const SEARCH_KIND: &str = "search_kind";
 const SEARCH_SORT: &str = "search_sort";
 const FILES_SORT: &str = "files_sort";
 const FILES_OLDER_THAN: &str = "files_older_than";
+const CHECK_UPDATES: &str = "check_updates";
+const LAST_UPDATE_CHECK: &str = "last_update_check";
 
 /// Settings file that makes a copy portable: when it lies next to the exe
 /// (even empty) and can be written, the settings are kept in it instead of
@@ -103,6 +105,10 @@ pub struct Settings {
     pub last_path: Option<String>,
     /// Folders scanned recently, newest first (the drive picker).
     pub recent: Vec<String>,
+    /// Ask GitHub for a newer release at start-up (off unless enabled).
+    pub check_updates: bool,
+    /// Unix seconds of the last update check that got an answer.
+    pub last_update_check: u64,
 }
 
 impl Default for Settings {
@@ -122,6 +128,8 @@ impl Default for Settings {
             files_older_than: 0,
             last_path: None,
             recent: Vec::new(),
+            check_updates: false,
+            last_update_check: 0,
         }
     }
 }
@@ -200,6 +208,14 @@ impl Settings {
                         .collect()
                 })
                 .unwrap_or_default(),
+            check_updates: match get(CHECK_UPDATES).as_deref() {
+                Some("true") => true,
+                Some("false") => false,
+                _ => d.check_updates,
+            },
+            last_update_check: get(LAST_UPDATE_CHECK)
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(d.last_update_check),
         }
     }
 
@@ -249,6 +265,8 @@ impl Settings {
         storage.set_string(FILES_OLDER_THAN, self.files_older_than.to_string());
         storage.set_string(LAST_PATH, self.last_path.clone().unwrap_or_default());
         storage.set_string(RECENT_PATHS, self.recent.join("\n"));
+        storage.set_string(CHECK_UPDATES, self.check_updates.to_string());
+        storage.set_string(LAST_UPDATE_CHECK, self.last_update_check.to_string());
     }
 }
 
@@ -308,6 +326,8 @@ mod tests {
             files_older_than: 5,
             last_path: Some(r"D:\Projects".into()),
             recent: vec![r"D:\Projects".into(), r"\\server\share\Фото".into()],
+            check_updates: true,
+            last_update_check: 1_790_000_000,
         };
         let mut storage = MemStorage::default();
         s.save(&mut storage);
@@ -342,6 +362,8 @@ mod tests {
         storage.set_string(FILES_SORT, "sideways".into());
         storage.set_string(FILES_OLDER_THAN, "-1".into());
         storage.set_string(LAST_PATH, String::new());
+        storage.set_string(CHECK_UPDATES, "yes".into());
+        storage.set_string(LAST_UPDATE_CHECK, "soon".into());
         assert_eq!(Settings::load(&storage), Settings::default());
     }
 }

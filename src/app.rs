@@ -22,6 +22,7 @@ use crate::ui::files::FilesView;
 use crate::ui::search::SearchView;
 use crate::ui::types::TypesView;
 use crate::ui::tree::TreeView;
+use crate::update::Updates;
 
 pub struct App {
     /// Light, dark or as in Windows (the toolbar's theme button).
@@ -45,6 +46,8 @@ pub struct App {
     pub side: SideView,
     pub tree_hovered: Option<u32>,
     pub about: AboutDialog,
+    /// Update check (off unless enabled in the About window).
+    pub updates: Updates,
     /// Folders the last scan could not read.
     pub errors: ErrorsView,
     pub status: String,
@@ -141,6 +144,7 @@ impl App {
             side: settings.side_view,
             tree_hovered: None,
             about: AboutDialog::default(),
+            updates: Updates::new(settings.check_updates, settings.last_update_check),
             errors: ErrorsView::default(),
             status: tr!("Ready", "Готово").into(),
             elevated: scan::win::is_elevated(),
@@ -163,6 +167,7 @@ impl App {
         app.search.sort = settings.search_sort;
         app.files.sort = settings.files_sort;
         app.files.older_than = settings.files_older_than;
+        app.updates.start_if_due(&cc.egui_ctx);
         if let Some(p) = initial {
             app.start_scan(p);
         }
@@ -694,6 +699,8 @@ impl eframe::App for App {
             files_older_than: self.files.older_than,
             last_path,
             recent: self.recent.clone(),
+            check_updates: self.updates.enabled,
+            last_update_check: self.updates.last_check,
         }
         .save(storage);
     }
@@ -713,13 +720,14 @@ impl eframe::App for App {
         self.poll_drives();
         self.poll_scan(&ctx);
         self.poll_delete();
+        self.updates.poll();
         self.show_confirm_delete(&ctx);
         // Not while a window is over the chart: its keys would change what
         // is behind it.
         if !self.about.open && !self.errors.open && self.confirm_delete.is_none() {
             self.handle_keys(&ctx);
         }
-        self.about.show(&ctx);
+        self.about.show(&ctx, &mut self.updates);
         self.errors.show(&ctx, self.elevated);
 
         egui::Panel::top("toolbar").show(root_ui, |ui| {

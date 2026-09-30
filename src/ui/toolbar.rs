@@ -252,8 +252,14 @@ impl App {
 
             ui.separator();
 
-            // About at the right end; the path takes the space left over.
+            // About at the right end (after a newer version, if one was
+            // found); the path takes the space left over.
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if let Some(tag) = self.updates.newer()
+                    && update_button(ui, tag).clicked()
+                {
+                    ui.ctx().open_url(egui::OpenUrl::new_tab(crate::update::release_url(tag)));
+                }
                 if ui
                     .button(tr!("About", "О программе"))
                     .on_hover_text(tr!("About Disk Flashlight (F1)", "О программе Disk Flashlight (F1)"))
@@ -392,6 +398,31 @@ fn elide_middle(s: &str, max: usize) -> String {
 /// The theme switch: a half-filled circle while following Windows, a sun
 /// for the light theme, a moon for the dark one; a click moves on to the
 /// next of the three.
+/// A newer release: its version with a download arrow in the link colour;
+/// a click opens its release page.
+fn update_button(ui: &mut Ui, tag: &str) -> egui::Response {
+    use egui::{Stroke, pos2, vec2};
+    let version = crate::update::version_of(tag);
+    let icon = ui.id().with("update_icon");
+    let resp = egui::Button::new((egui::Atom::custom(icon, vec2(12.0, 14.0)), version)).atom_ui(ui);
+    let response = resp.response.clone().on_hover_text(tr!(
+        format!("Version {version} is available: open its release page"),
+        format!("Доступна версия {version}: открыть страницу выпуска")
+    ));
+    if let Some(rect) = resp.rect(icon) {
+        let stroke = Stroke::new(1.6, ui.visuals().hyperlink_color);
+        let painter = ui.painter();
+        let (cx, top, bottom) = (rect.center().x, rect.top() + 1.5, rect.bottom() - 1.5);
+        let tip = bottom - 3.0;
+        // Arrow down onto a tray.
+        painter.line_segment([pos2(cx, top), pos2(cx, tip)], stroke);
+        painter.line_segment([pos2(cx - 4.0, tip - 4.0), pos2(cx, tip)], stroke);
+        painter.line_segment([pos2(cx + 4.0, tip - 4.0), pos2(cx, tip)], stroke);
+        painter.line_segment([pos2(rect.left() + 0.5, bottom), pos2(rect.right() - 0.5, bottom)], stroke);
+    }
+    response
+}
+
 fn theme_button(ui: &mut Ui, theme: ThemePreference) -> egui::Response {
     use egui::{Shape, Stroke, pos2, vec2};
     let icon = ui.id().with("theme_icon");

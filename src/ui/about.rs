@@ -5,6 +5,7 @@ use egui::{Align, Layout, TextureHandle, Ui};
 
 use crate::VERSION;
 use crate::i18n::{LangChoice, set_lang, system_lang};
+use crate::update::{Status, Updates, release_url, version_of};
 
 const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
 const LICENSE: &str = env!("CARGO_PKG_LICENSE");
@@ -41,7 +42,7 @@ fn lang_label(choice: LangChoice) -> String {
 }
 
 impl AboutDialog {
-    pub fn show(&mut self, ctx: &egui::Context) {
+    pub fn show(&mut self, ctx: &egui::Context, updates: &mut Updates) {
         if !self.open {
             return;
         }
@@ -101,12 +102,67 @@ impl AboutDialog {
                     self.lang = choice;
                     set_lang(choice.resolve());
                 }
+                ui.add_space(10.0);
+                ui.separator();
+                ui.add_space(6.0);
+                update_section(ui, updates);
                 ui.add_space(8.0);
             });
             close_button(ui)
         });
         if modal.inner || modal.should_close() {
             self.open = false;
+        }
+    }
+}
+
+/// The update check: the start-up option, a button to check now and the
+/// outcome.
+fn update_section(ui: &mut Ui, updates: &mut Updates) {
+    let before = updates.enabled;
+    ui.checkbox(
+        &mut updates.enabled,
+        tr!("Check for updates at start-up (once a day)", "Проверять обновления при запуске (раз в сутки)"),
+    )
+    .on_hover_text(tr!(
+        "Asks api.github.com for the latest release; nothing else is sent, \
+         and nothing is downloaded",
+        "Запрашивает у api.github.com последний выпуск; больше ничего не \
+         отправляется и не скачивается"
+    ));
+    if updates.enabled && !before {
+        updates.start_if_due(ui.ctx());
+    }
+    let checking = updates.status == Status::Checking;
+    if ui
+        .add_enabled(!checking, egui::Button::new(tr!("Check now", "Проверить сейчас")))
+        .clicked()
+    {
+        updates.start(ui.ctx());
+    }
+    match &updates.status {
+        Status::Unknown => {}
+        Status::Checking => {
+            ui.horizontal(|ui| {
+                // Centred by hand, as the language list above.
+                ui.add_space(((ui.available_width() - 110.0) / 2.0).max(0.0));
+                ui.add(egui::Spinner::new());
+                ui.weak(tr!("Checking…", "Проверка…"));
+            });
+        }
+        Status::UpToDate => {
+            ui.weak(tr!("This is the latest version", "Установлена последняя версия"));
+        }
+        Status::Newer(tag) => {
+            let version = version_of(tag);
+            ui.hyperlink_to(
+                tr!(format!("Version {version} is available"), format!("Доступна версия {version}")),
+                release_url(tag),
+            );
+        }
+        Status::Failed(e) => {
+            ui.weak(tr!("Could not check for updates", "Не удалось проверить обновления"))
+                .on_hover_text(e);
         }
     }
 }
