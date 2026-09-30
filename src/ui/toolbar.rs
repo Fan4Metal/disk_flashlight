@@ -330,9 +330,19 @@ impl App {
             let (size, alloc) = (human_size(root.size), human_size(root.alloc));
             let waste = human_size(root.alloc.saturating_sub(root.size));
             ui.label(tr!(
-                format!("Dirs: {dirs}   Files: {files}   Size: {size}   Alloc: {alloc}   Waste: {waste}"),
-                format!("Папок: {dirs}   Файлов: {files}   Размер: {size}   На диске: {alloc}   Потери: {waste}")
+                format!("Dirs: {dirs}   Files: {files}   Size: {size}   Alloc: {alloc}"),
+                format!("Папок: {dirs}   Файлов: {files}   Размер: {size}   На диске: {alloc}")
             ));
+            ui.add_space(4.0);
+            ui.label(tr!(format!("Waste: {waste}"), format!("Потери: {waste}")))
+                .on_hover_text(tr!(
+                    "Size on disk minus the size of the data: mostly the unused \
+                     ends of the files' last clusters. Compressed and sparse files \
+                     take less than their size, which lowers this figure.",
+                    "Размер на диске минус размер данных: в основном неиспользуемые \
+                     хвосты последних кластеров файлов. Сжатые и разреженные файлы \
+                     занимают меньше своего размера и уменьшают это число."
+                ));
             let hovered = self.chart.hovered.or(self.tree_hovered);
             // The errors link stays at the right end; the hovered item and
             // then the status message take what is left, cut short with an
