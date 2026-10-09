@@ -3,7 +3,8 @@ Release build: cargo build --release, the Inno Setup installer
 (dist\\Disk_Flashlight_<version>_Setup.exe) and the portable archive
 (dist\\Disk_Flashlight_<version>_portable.zip).
 
-Runs from any folder: python tools/make_release.py [--no-tests]
+Runs from any folder: python tools/make_release.py [--no-tests] [--install]
+--install then installs the build silently over the installed copy, to try it.
 No external dependencies. The output of cargo and ISCC is shown as is, so that
 the progress of the build is visible.
 """
@@ -15,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import time
+import winreg
 import zipfile
 from pathlib import Path
 
@@ -31,6 +33,13 @@ BUNDLED_FILES = ["LICENSE", "README.md", "README.ru.md"]
 PORTABLE_DIR = "Disk Flashlight"
 # Must match settings::PORTABLE_FILE in src/settings.rs.
 PORTABLE_SETTINGS = "disk_flashlight.ron"
+
+# The installer's AppId (setup.iss) and where Inno Setup records the installation.
+APP_ID = "{3E54EDD2-D754-4D66-BC36-0A020E427D6F}"
+UNINSTALL_KEY = Rf"Software\Microsoft\Windows\CurrentVersion\Uninstall\{APP_ID}_is1"
+# Silent installation: no wizard, no questions, no restart; the previous choices
+# (folder, tasks such as the context menu item) are used again.
+SILENT_INSTALL = ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS"]
 
 ISCC_PATHS = [
     Path(R"C:\Program Files (x86)\Inno Setup 6\ISCC.exe"),
@@ -127,15 +136,55 @@ def find_iscc() -> Path:
     raise ReleaseError("ISCC.exe not found: install Inno Setup 6 or add ISCC to PATH")
 
 
+def exe_locked(exe: Path) -> bool:
+    if not exe.is_file():
+        return False
+    try:
+        with exe.open("r+b"):
+            return False
+    except PermissionError:
+        return True
+
+
 def check_exe_not_running() -> None:
     """A running exe is locked by Windows, and cargo could not overwrite it."""
-    if not EXE.is_file():
-        return
-    try:
-        with EXE.open("r+b"):
-            pass
-    except PermissionError:
+    if exe_locked(EXE):
         raise ReleaseError(f"{EXE.relative_to(ROOT)} is running: close Disk Flashlight and build again")
+
+
+def close_running_exe(exe: Path) -> None:
+    """A running exe is locked by Windows, and the installer could not overwrite it.
+
+    The copy started from `exe` gets WM_CLOSE first (taskkill without /F), so that it saves its settings,
+    then is closed by force after 3 seconds. An elevated copy (Fast scan) cannot be closed from a
+    non-elevated shell, which ends in the error below."""
+    if not exe_locked(exe):
+        return
+    query = f"(Get-Process disk_flashlight -ErrorAction SilentlyContinue | Where-Object Path -eq '{exe}').Id"
+    out = subprocess.run(["powershell", "-NoProfile", "-Command", query], capture_output=True, text=True)
+    pids = out.stdout.split()
+    for pid in pids:
+        print(f"  closing {exe.name} (PID {pid})")
+        subprocess.run(["taskkill", "/PID", pid], capture_output=True)
+    deadline = time.monotonic() + 3
+    while exe_locked(exe) and time.monotonic() < deadline:
+        time.sleep(0.2)
+    if exe_locked(exe):
+        for pid in pids:
+            subprocess.run(["taskkill", "/F", "/PID", pid], capture_output=True)
+        time.sleep(0.5)
+    if exe_locked(exe):
+        raise ReleaseError(f"{exe} is in use: close Disk Flashlight and try again")
+
+
+def installed_exe() -> Path:
+    """The exe of the installed copy: where Inno Setup recorded it, or the default folder."""
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, UNINSTALL_KEY) as key:
+            folder = Path(winreg.QueryValueEx(key, "InstallLocation")[0])
+    except OSError:
+        folder = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Disk Flashlight"
+    return folder / EXE.name
 
 
 def check_prerequisites() -> tuple[str, Path]:
@@ -168,12 +217,15 @@ def make_portable_zip(version: str) -> Path:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build a Disk Flashlight release")
     parser.add_argument("--no-tests", action="store_true", help="do not run cargo test")
+    parser.add_argument(
+        "--install", action="store_true", help="then install the build silently over the installed copy"
+    )
     args = parser.parse_args()
 
     # Line buffering: with output redirected to a file, step headers still come before the tools' output.
     sys.stdout.reconfigure(line_buffering=True)
     total_started = time.monotonic()
-    steps = Steps(4 if args.no_tests else 5)
+    steps = Steps((4 if args.no_tests else 5) + args.install)
     try:
         steps.next("Checks")
         version = extract_version(CARGO_TOML)
@@ -211,6 +263,17 @@ def main() -> int:
         # Names without spaces: GitHub replaces spaces in release file names with dots.
         portable = make_portable_zip(version)
         print(f"Portable version: {portable.relative_to(ROOT)}")
+
+        if args.install:
+            steps.next("Silent installation")
+            installed = installed_exe()
+            # Closed here rather than by the installer (/CLOSEAPPLICATIONS is the fallback), so that
+            # it saves its settings.
+            close_running_exe(installed)
+            run_command([str(installer), *SILENT_INSTALL], "installation")
+            if not installed.is_file():
+                raise ReleaseError(f"the installer finished, but {installed} was not found")
+            print(f"Installed: {installed}")
         steps.finish()
 
     except ReleaseError as e:
@@ -224,6 +287,8 @@ def main() -> int:
     print(f"\n=== Release {version} built in {minutes} min {seconds} s ===")
     print(f"  installer:   {installer}  ({human_size(installer.stat().st_size)})")
     print(f"  portable:    {portable}  ({human_size(portable.stat().st_size)})")
+    if args.install:
+        print(f"  installed:   {installed}")
     return 0
 
 
