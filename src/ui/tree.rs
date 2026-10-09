@@ -2,15 +2,18 @@
 
 use std::collections::HashSet;
 
-use egui::{Align, Layout, ScrollArea, Ui};
+use egui::{Align, Layout, ScrollArea, Ui, vec2};
 
 use crate::format::human_size;
 use crate::model::{Metric, Model, NO_NODE};
+use crate::ui::files::{SIZE_WIDTH, cell};
 use crate::ui::{ItemCommand, item_menu};
 
 const ROW_HEIGHT: f32 = 20.0;
 const INDENT: f32 = 14.0;
 pub(super) const ARROW_WIDTH: f32 = 16.0;
+/// Narrowest a folder name gets before the row scrolls instead.
+const MIN_NAME: f32 = 60.0;
 
 /// Expand/collapse triangle painted directly (the default fonts lack the
 /// ▲/▼ glyphs), returning the click response.
@@ -315,7 +318,19 @@ impl TreeView {
                         ui.add_space(ARROW_WIDTH);
                     }
                     let selected = id == current_root || Some(id) == hovered_dir;
-                    let label = ui.selectable_label(selected, model.name(id));
+                    // The size takes its column at the right edge and the
+                    // name is cut to what is left, as in the file lists;
+                    // only a row nested too deep for MIN_NAME scrolls.
+                    let width = ui.available_width().max(SIZE_WIDTH + MIN_NAME);
+                    let label = ui
+                        .allocate_ui_with_layout(vec2(width, ROW_HEIGHT), Layout::right_to_left(Align::Center), |ui| {
+                            cell(ui, SIZE_WIDTH, human_size(node.metric(metric)));
+                            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                                ui.add(egui::Button::selectable(selected, model.name(id)).truncate())
+                            })
+                            .inner
+                        })
+                        .inner;
                     if label.clicked() {
                         action.selected = Some(id);
                     }
@@ -329,9 +344,6 @@ impl TreeView {
                         if let Some(c) = item_menu(ui, id) {
                             action.command = Some(c);
                         }
-                    });
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.weak(human_size(node.metric(metric)));
                     });
                 });
             }
@@ -420,7 +432,7 @@ mod tests {
     /// horizontal scroll bar shows up.
     #[test]
     fn rows_fit_the_list_at_any_scale() {
-        let names = ["Users", "Program Files (x86)", "Windows", "ProgramData", "$Recycle.Bin", "System Volume Information"];
+        let names = ["Users", "Program Files (x86)", "Windows", "ProgramData", "$Recycle.Bin", "System Volume Information", "14e189c6-32e7-41b4-a3aa-f249b112b68c-and-then-some-more"];
         let subs = names.iter().enumerate().map(|(i, n)| dir(n, 1000 - i as u64, vec![dir("x", 1, vec![])])).collect();
         let m = Model::from_raw(dir("C:", 1, subs), "C:\\".into(), 1);
         for ppp in [1.0f32, 1.25, 1.5, 1.75, 2.0] {

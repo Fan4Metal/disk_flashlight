@@ -15,7 +15,7 @@ use crate::ui::tree::TreeAction;
 const LIMIT: usize = 100;
 pub(super) const ROW_HEIGHT: f32 = 20.0;
 /// Widths of the size and date columns, in points.
-const SIZE_WIDTH: f32 = 60.0;
+pub(super) const SIZE_WIDTH: f32 = 60.0;
 const DATE_WIDTH: f32 = 72.0;
 /// Choices of the age filter, in years (0 = any age).
 const AGE_CHOICES: [u32; 5] = [0, 1, 2, 5, 10];
