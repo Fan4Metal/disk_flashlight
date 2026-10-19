@@ -242,6 +242,26 @@ pub fn refresh_caption(hwnd: isize) {
     }
 }
 
+/// Cloak window `hwnd` (`DWMWA_CLOAK`) or show it again: a cloaked window
+/// is shown, sized and painted as usual, only DWM leaves it off the screen.
+/// dwmapi is declared by hand, as user32 in `refresh_caption`.
+pub fn cloak(hwnd: isize, on: bool) {
+    #[link(name = "dwmapi")]
+    unsafe extern "system" {
+        fn DwmSetWindowAttribute(
+            hwnd: isize,
+            attribute: u32,
+            value: *const core::ffi::c_void,
+            size: u32,
+        ) -> i32;
+    }
+    const DWMWA_CLOAK: u32 = 13;
+    let value = i32::from(on);
+    unsafe {
+        DwmSetWindowAttribute(hwnd, DWMWA_CLOAK, (&raw const value).cast(), 4);
+    }
+}
+
 /// Show `text` in a system message box with an error icon, waiting until
 /// it is closed. It needs no window of the app, so it also works when the
 /// app is failing. user32 is declared by hand, as in `refresh_caption`.

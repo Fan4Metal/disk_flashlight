@@ -2,7 +2,8 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::Ordering;
+use std::time::{Duration, Instant};
 
 use egui::{Key, Modifiers};
 
@@ -74,11 +75,31 @@ pub struct App {
     refresh_caption: bool,
     /// Minimum window width last set from the toolbar (`fit_min_width`).
     pub min_width: f32,
+    /// The main window, if it is a Win32 one.
+    hwnd: Option<isize>,
+    /// The window is cloaked until it has painted a few frames (see
+    /// `uncloak`): the time it is shown anyway, the frame it was cloaked
+    /// in, whether it is to be maximized first.
+    cloak: Option<(Instant, u64, bool)>,
 }
 
 /// Smallest window size in points; the width grows to what the toolbar
 /// needs (`App::fit_min_width`).
 pub const MIN_WINDOW: [f32; 2] = [640.0, 420.0];
+
+/// Frames the window paints, cloaked, before it is shown.
+const PAINTED_TO_SHOW: u64 = 3;
+/// How long the window stays cloaked at most.
+const UNCLOAK_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// The handle of `window` if it is a Win32 window (`eframe::CreationContext`
+/// and `eframe::Frame` both have one).
+fn window_hwnd(window: &impl raw_window_handle::HasWindowHandle) -> Option<isize> {
+    match window.window_handle().ok()?.as_raw() {
+        raw_window_handle::RawWindowHandle::Win32(w) => Some(w.hwnd.get()),
+        _ => None,
+    }
+}
 
 /// Number of folders kept in [`App::recent`].
 pub const MAX_RECENT: usize = 8;
@@ -132,6 +153,16 @@ impl App {
         // selected in the drive picker and nothing is scanned (a slow or
         // network drive would start working unasked).
         let last_path = settings.last_path.unwrap_or_default();
+        // eframe shows the window after its first frame, but Windows shows
+        // it before that frame reaches DWM: white for a moment. So it is
+        // cloaked while still hidden and shown by `uncloak`.
+        let hwnd = window_hwnd(cc);
+        let cloak = hwnd.map(|hwnd| {
+            scan::win::cloak(hwnd, true);
+            let frame = cc.egui_ctx.cumulative_frame_nr();
+            let maximized = crate::MAXIMIZE_WHEN_SHOWN.load(Ordering::Relaxed);
+            (Instant::now() + UNCLOAK_TIMEOUT, frame, maximized)
+        });
         let mut app = Self {
             theme: settings.theme,
             model: None,
@@ -164,6 +195,8 @@ impl App {
             shown_theme: None,
             refresh_caption: false,
             min_width: MIN_WINDOW[0],
+            hwnd,
+            cloak,
         };
         app.chart.palette.mode = settings.color_mode;
         app.chart.params.max_depth = settings.rings;
@@ -643,13 +676,11 @@ impl App {
     /// theme to the window at the end of the frame it changed in, and
     /// Windows applies it to the caption only on the next repaint of the
     /// frame, so the frame after the change asks for one.
-    fn follow_theme(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
-        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    fn follow_theme(&mut self, ctx: &egui::Context) {
         if std::mem::take(&mut self.refresh_caption)
-            && let Ok(handle) = frame.window_handle()
-            && let RawWindowHandle::Win32(w) = handle.as_raw()
+            && let Some(hwnd) = self.hwnd
         {
-            scan::win::refresh_caption(w.hwnd.get());
+            scan::win::refresh_caption(hwnd);
         }
         let theme = ctx.theme();
         if self.shown_theme.is_some_and(|t| t != theme) {
@@ -657,6 +688,25 @@ impl App {
             ctx.request_repaint();
         }
         self.shown_theme = Some(theme);
+    }
+
+    /// Show the window cloaked in `App::new` once it has painted a few
+    /// frames and, when it is to be maximized, is maximized; after
+    /// `UNCLOAK_TIMEOUT` in any case.
+    fn uncloak(&mut self, ctx: &egui::Context) {
+        let Some((until, frame, maximized)) = self.cloak else {
+            return;
+        };
+        let ready = ctx.cumulative_frame_nr() >= frame + PAINTED_TO_SHOW
+            && (!maximized || ctx.input(|i| i.viewport().maximized.unwrap_or(false)));
+        if ready || Instant::now() >= until {
+            if let Some(hwnd) = self.hwnd {
+                scan::win::cloak(hwnd, false);
+            }
+            self.cloak = None;
+        } else {
+            ctx.request_repaint();
+        }
     }
 
     /// Show `n` rings in the chart, kept within the allowed range.
@@ -824,7 +874,8 @@ impl eframe::App for App {
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
         }
-        self.follow_theme(&ctx, frame);
+        self.uncloak(&ctx);
+        self.follow_theme(&ctx);
         self.handle_drop(&ctx);
         self.drop_overlay(&ctx);
         self.poll_drives();
